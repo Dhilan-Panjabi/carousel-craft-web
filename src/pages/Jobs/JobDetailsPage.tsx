@@ -189,14 +189,17 @@ export default function JobDetailsPage() {
         errorDiv.innerHTML = `
           <div class="mx-auto mb-2 text-muted-foreground">Image failed to load</div>
           <div class="flex justify-center mt-2">
-            <button class="px-2 py-1 text-xs bg-muted text-muted-foreground rounded hover:bg-muted/90">View URL</button>
+            <div class="px-2 py-1 text-xs bg-muted text-muted-foreground rounded cursor-pointer hover:bg-muted/90">View URL</div>
           </div>
         `;
         
-        // View URL button
-        errorDiv.querySelector("button")?.addEventListener("click", () => {
-          window.open(url, '_blank');
-        });
+        // View URL div click handler
+        const viewUrlDiv = errorDiv.querySelector("div.flex div");
+        if (viewUrlDiv) {
+          viewUrlDiv.addEventListener("click", () => {
+            window.open(url, '_blank');
+          });
+        }
         
         parent.appendChild(errorDiv);
       }
@@ -432,7 +435,11 @@ export default function JobDetailsPage() {
                             </Badge>
                           )}
                         </div>
-                        <p className="line-clamp-2">{prompt.prompt}</p>
+                        <p className="line-clamp-2">
+                          {typeof prompt.prompt === 'string' 
+                            ? prompt.prompt 
+                            : "No prompt content available"}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -498,7 +505,9 @@ export default function JobDetailsPage() {
                 <div>
                   <h3 className="text-lg font-medium mb-2">Prompt {selectedPromptIndex + 1}</h3>
                   <div className="p-4 bg-muted rounded-md text-sm whitespace-pre-wrap">
-                    {job.prompts[selectedPromptIndex].prompt}
+                    {typeof job.prompts[selectedPromptIndex].prompt === 'string'
+                      ? job.prompts[selectedPromptIndex].prompt
+                      : "No prompt content available"}
                   </div>
                 </div>
                 <div>
@@ -603,6 +612,9 @@ export default function JobDetailsPage() {
       {/* Image Preview Dialog */}
       <Dialog open={isImagePreviewOpen} onOpenChange={setIsImagePreviewOpen}>
         <DialogContent className="max-w-5xl p-0 overflow-hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image Preview</DialogTitle>
+          </DialogHeader>
           <div className="relative">
             <DialogClose className="absolute right-2 top-2 z-10">
               <Button variant="ghost" size="icon" className="h-8 w-8 bg-black/40 backdrop-blur-sm">
@@ -619,6 +631,16 @@ export default function JobDetailsPage() {
                     <div className="text-center">
                       <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
                       <p>Image could not be loaded</p>
+                      {selectedImageUrl && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="mt-4"
+                          onClick={() => window.open(selectedImageUrl, '_blank')}
+                        >
+                          Open URL in new tab
+                        </Button>
+                      )}
                     </div>
                   </div>
                 }

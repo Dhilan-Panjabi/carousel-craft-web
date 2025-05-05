@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
           // Create the image object
           const image: GeneratedImage = {
             b64_json: imageResult.b64_json,
-            url: imageResult.url,
+            url: imageUrl,
             revised_prompt: imageResult.revised_prompt || prompt.content
           };
           
@@ -270,16 +270,18 @@ Deno.serve(async (req) => {
           
           // Save image to database
           try {
-            console.log(`Saving image record to database: ${image.id}`);
+            console.log(`Saving image record to database: ${prompt.id}`);
             const { error: dbError } = await supabase
               .from('carousel_images')
               .insert({
-                id: image.id,
+                id: prompt.id,
                 job_id: jobId,
                 prompt_id: prompt.id,
-                image_url: image.url,
-                b64_json: image.b64_json,
-                revised_prompt: image.revised_prompt,
+                image_url: imageUrl,
+                width: 1024,
+                height: 1024,
+                b64_json: null, // Store null since we don't need to duplicate the data
+                revised_prompt: imageResult.revised_prompt || prompt.content,
                 created_at: new Date().toISOString()
               });
               
@@ -320,7 +322,7 @@ Deno.serve(async (req) => {
     }
     
     // Step 3: Finalize job
-    const imageUrls = images.map(img => img.url || '');
+    const imageUrls = images.map(img => img.url || '').filter(url => url !== '');
     await updateJobStatus(
       supabase, 
       jobId, 
