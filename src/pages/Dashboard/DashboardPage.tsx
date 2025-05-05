@@ -4,92 +4,129 @@ import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Users, BarChart3, DollarSign } from "lucide-react";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
 
   return (
-    <div className="container py-8">
-      <div className="flex flex-col items-center text-center mb-12">
-        <h1 className="text-4xl font-extrabold tracking-tight lg:text-5xl mb-4">
+    <div className="container py-6">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold tracking-tight">
           Welcome to <span className="brand-gradient">Carousel Gen</span>
         </h1>
-        <p className="text-lg text-muted-foreground max-w-[700px] mb-8">
-          Generate beautiful carousel images at scale. 
-          Upload templates, provide data through CSV files, and let our system do the work.
-        </p>
         <Button 
-          size="lg" 
           onClick={() => navigate("/generate")}
           className="group"
         >
-          Create Your First Carousel
+          Create New Carousel
           <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
         </Button>
       </div>
       
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 mb-8">
         <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Total Templates</CardDescription>
+            <div className="flex justify-between items-center">
+              <CardTitle className="text-2xl">8</CardTitle>
+              <Users className="h-6 w-6 text-muted-foreground" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-green-600">+2 since last month</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Active Jobs</CardDescription>
+            <div className="flex justify-between items-center">
+              <CardTitle className="text-2xl">12</CardTitle>
+              <BarChart3 className="h-6 w-6 text-muted-foreground" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-red-600">-1 since last month</p>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Images Generated</CardDescription>
+            <div className="flex justify-between items-center">
+              <CardTitle className="text-2xl">845</CardTitle>
+              <DollarSign className="h-6 w-6 text-muted-foreground" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-xs text-green-600">+105 since last month</p>
+          </CardContent>
+        </Card>
+      </div>
+      
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>Templates</CardTitle>
+            <CardTitle>Recent Activity</CardTitle>
             <CardDescription>
-              Upload and manage your design templates
+              Your recent carousel generation activity
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Create professional templates with PNG/SVG files and YAML configuration
-            </p>
+            <div className="space-y-4">
+              <div className="flex justify-between items-center border-b pb-2">
+                <div>
+                  <p className="font-medium">Product Showcase</p>
+                  <p className="text-sm text-muted-foreground">24 images • Completed</p>
+                </div>
+                <p className="text-sm text-muted-foreground">2 hours ago</p>
+              </div>
+              <div className="flex justify-between items-center border-b pb-2">
+                <div>
+                  <p className="font-medium">Summer Sale</p>
+                  <p className="text-sm text-muted-foreground">12 images • Processing</p>
+                </div>
+                <p className="text-sm text-muted-foreground">5 hours ago</p>
+              </div>
+              <div className="flex justify-between items-center border-b pb-2">
+                <div>
+                  <p className="font-medium">Brand Assets</p>
+                  <p className="text-sm text-muted-foreground">36 images • Completed</p>
+                </div>
+                <p className="text-sm text-muted-foreground">Yesterday</p>
+              </div>
+            </div>
           </CardContent>
-          <CardFooter>
-            <Button variant="outline" onClick={() => navigate("/templates")}>
-              Browse Templates
-            </Button>
-          </CardFooter>
         </Card>
         
         <Card>
           <CardHeader>
-            <CardTitle>Jobs</CardTitle>
+            <CardTitle>Quick Links</CardTitle>
             <CardDescription>
-              Monitor your generation jobs
+              Access frequently used features
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Track status and progress of all your carousel generation jobs
-            </p>
+            <div className="flex flex-col gap-2">
+              <Button variant="outline" onClick={() => navigate("/templates")} className="justify-start">
+                Browse Templates
+              </Button>
+              <Button variant="outline" onClick={() => navigate("/jobs")} className="justify-start">
+                View Jobs
+              </Button>
+              <Button variant="outline" onClick={() => navigate("/generate")} className="justify-start">
+                Start Generating
+              </Button>
+              <Button variant="outline" onClick={() => navigate("/account")} className="justify-start">
+                Account Settings
+              </Button>
+            </div>
           </CardContent>
-          <CardFooter>
-            <Button variant="outline" onClick={() => navigate("/jobs")}>
-              View Jobs
-            </Button>
-          </CardFooter>
-        </Card>
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>Generate</CardTitle>
-            <CardDescription>
-              Start a new generation job
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Upload CSVs or scripts, select templates, and generate carousels
-            </p>
-          </CardContent>
-          <CardFooter>
-            <Button onClick={() => navigate("/generate")}>
-              Start Generating
-            </Button>
-          </CardFooter>
         </Card>
       </div>
     </div>
