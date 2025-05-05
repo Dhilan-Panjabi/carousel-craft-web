@@ -28,6 +28,7 @@ import {
   getAllTemplates, 
   Template
 } from "@/integrations/supabase/templateService";
+import { createJob } from "@/integrations/jobs/jobService";
 import { toast as sonnerToast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +41,8 @@ export default function GenerateWizardPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvData, setCsvData] = useState<CSVRow[] | null>(null);
   const [scriptContent, setScriptContent] = useState("");
-  const [isDataSource, setIsDataSource] = useState<"csv" | "script">("csv");
+  const [naturalLanguage, setNaturalLanguage] = useState("");
+  const [isDataSource, setIsDataSource] = useState<"csv" | "script" | "natural-language">("csv");
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // Add state for templates
@@ -117,7 +119,7 @@ export default function GenerateWizardPage() {
 
   const handleSubmit = async () => {
     if (!jobName || !selectedTemplate || numVariants < 1 || 
-        (!csvFile && !scriptContent)) {
+        (!csvFile && !scriptContent && !naturalLanguage)) {
       toast({
         title: "Incomplete form",
         description: "Please fill all required fields",
@@ -129,19 +131,31 @@ export default function GenerateWizardPage() {
     setIsSubmitting(true);
 
     try {
-      // In a real app, this would call a Supabase Edge Function
-      // const { data, error } = await supabase.functions.invoke('jobs', {
-      //   body: {
-      //     name: jobName,
-      //     templateId: selectedTemplate,
-      //     variants: numVariants,
-      //     dataType: isDataSource,
-      //     data: isDataSource === 'csv' ? csvData : scriptContent
-      //   }
-      // });
+      // Get the template name from the selected template
+      const selectedTemplateObject = templates.find(t => t.id === selectedTemplate);
+      if (!selectedTemplateObject) {
+        throw new Error("Selected template not found");
+      }
+
+      // Prepare the data content for the job
+      let dataContent;
+      if (isDataSource === "csv") {
+        dataContent = csvData;
+      } else if (isDataSource === "script") {
+        dataContent = scriptContent;
+      } else {
+        dataContent = naturalLanguage;
+      }
       
-      // Mock Edge Function call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Create job using the job service
+      await createJob(
+        jobName,
+        selectedTemplate,
+        selectedTemplateObject.name,
+        numVariants,
+        isDataSource,
+        dataContent
+      );
       
       toast({
         title: "Job created successfully",
@@ -327,6 +341,13 @@ export default function GenerateWizardPage() {
               >
                 Custom Script
               </Button>
+              <Button
+                variant={isDataSource === "natural-language" ? "default" : "outline"}
+                onClick={() => setIsDataSource("natural-language")}
+                className="flex-1"
+              >
+                Natural Language
+              </Button>
             </div>
 
             {isDataSource === "csv" ? (
@@ -360,7 +381,7 @@ export default function GenerateWizardPage() {
                   </Alert>
                 )}
               </div>
-            ) : (
+            ) : isDataSource === "script" ? (
               <div className="space-y-2">
                 <Label htmlFor="script">Custom Script</Label>
                 <Textarea
@@ -372,6 +393,20 @@ export default function GenerateWizardPage() {
                 />
                 <p className="text-xs text-muted-foreground">
                   Write JavaScript that returns an array of objects for your variants
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="natural-language">Natural Language Instructions</Label>
+                <Textarea
+                  id="natural-language"
+                  placeholder="Describe the content for your carousel in natural language..."
+                  className="h-60"
+                  value={naturalLanguage}
+                  onChange={(e) => setNaturalLanguage(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Describe your content in natural language, and GPT-4o will create optimized prompts for image generation
                 </p>
               </div>
             )}
@@ -435,6 +470,13 @@ export default function GenerateWizardPage() {
                   <>
                     <div className="text-sm font-medium">File:</div>
                     <div>{csvFile.name}</div>
+                  </>
+                )}
+
+                {isDataSource === "natural-language" && naturalLanguage && (
+                  <>
+                    <div className="text-sm font-medium">Natural Language:</div>
+                    <div className="truncate max-w-md">{naturalLanguage.substring(0, 100)}{naturalLanguage.length > 100 ? "..." : ""}</div>
                   </>
                 )}
               </div>

@@ -72,6 +72,108 @@ export interface Database {
         }
         Relationships: []
       }
+      jobs: {
+        Row: {
+          id: string
+          name: string
+          template_id: string
+          template_name: string
+          status: string
+          progress: number
+          message: string | null
+          image_urls: string[] | null
+          prompts: Json | null
+          data_type: string
+          data_content: Json | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          template_id: string
+          template_name: string
+          status?: string
+          progress?: number
+          message?: string | null
+          image_urls?: string[] | null
+          prompts?: Json | null
+          data_type: string
+          data_content?: Json | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          template_id?: string
+          template_name?: string
+          status?: string
+          progress?: number
+          message?: string | null
+          image_urls?: string[] | null
+          prompts?: Json | null
+          data_type?: string
+          data_content?: Json | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      carousel_prompts: {
+        Row: {
+          id: string
+          job_id: string
+          prompt_text: string
+          data_variables: Json | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          job_id: string
+          prompt_text: string
+          data_variables?: Json | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          job_id?: string
+          prompt_text?: string
+          data_variables?: Json | null
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      carousel_images: {
+        Row: {
+          id: string
+          job_id: string
+          prompt_id: string
+          image_url: string
+          width: number
+          height: number
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          job_id: string
+          prompt_id: string
+          image_url: string
+          width: number
+          height: number
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          job_id?: string
+          prompt_id?: string
+          image_url?: string
+          width?: number
+          height?: number
+          created_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {}
     Functions: {}

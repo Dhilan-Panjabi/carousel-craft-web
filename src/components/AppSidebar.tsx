@@ -7,6 +7,7 @@ import {
   User,
   Search,
   Home,
+  Images,
 } from "lucide-react";
 import {
   Sidebar,
@@ -42,6 +43,11 @@ const navigationItems = [
     title: "Generate",
     icon: Share2,
     path: "/generate",
+  },
+  {
+    title: "Library",
+    icon: Images,
+    path: "/library",
   },
   {
     title: "Account",

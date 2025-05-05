@@ -1,4 +1,3 @@
-
 import { Routes, Route, Navigate } from "react-router-dom";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
@@ -20,6 +19,8 @@ import ProtectedRoute from "@/components/Auth/ProtectedRoute";
 import DashboardPage from "@/pages/Dashboard/DashboardPage";
 import TemplateManagerPage from "@/pages/Templates/TemplateManagerPage";
 import JobListPage from "@/pages/Jobs/JobListPage";
+import JobDetailsPage from "@/pages/Jobs/JobDetailsPage";
+import LibraryPage from "@/pages/Library/LibraryPage";
 import GenerateWizardPage from "@/pages/Generate/GenerateWizardPage";
 import AccountPage from "@/pages/Account/AccountPage";
 import AuthPage from "@/pages/Auth/AuthPage";
@@ -74,6 +75,8 @@ export function AppLayout() {
                       <Route path="/" element={<DashboardPage />} />
                       <Route path="/templates" element={<TemplateManagerPage />} />
                       <Route path="/jobs" element={<JobListPage />} />
+                      <Route path="/jobs/:jobId" element={<JobDetailsPage />} />
+                      <Route path="/library" element={<LibraryPage />} />
                       <Route path="/generate" element={<GenerateWizardPage />} />
                       <Route path="/account" element={<AccountPage />} />
                       <Route path="*" element={<NotFound />} />
@@ -87,6 +90,8 @@ export function AppLayout() {
           <Route index element={<DashboardPage />} />
           <Route path="/templates" element={<TemplateManagerPage />} />
           <Route path="/jobs" element={<JobListPage />} />
+          <Route path="/jobs/:jobId" element={<JobDetailsPage />} />
+          <Route path="/library" element={<LibraryPage />} />
           <Route path="/generate" element={<GenerateWizardPage />} />
           <Route path="/account" element={<AccountPage />} />
         </Route>

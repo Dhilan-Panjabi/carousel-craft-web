@@ -1,0 +1,364 @@
+import { supabase } from '../supabase/client';
+import { generateImagePrompts, generateImagesFromPrompts } from '../ai/aiService';
+import { nanoid } from 'nanoid';
+import { Json } from '../supabase/types';
+
+export interface JobData {
+  id: string;
+  name: string;
+  templateId: string;
+  templateName: string;
+  status: 'queued' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  variants: number;
+  dataType: 'csv' | 'script' | 'natural-language';
+  dataContent?: Record<string, unknown>[] | string;
+  createdAt: string;
+  updatedAt: string;
+  imageUrls?: string[];
+  message?: string;
+  prompts?: Array<{
+    id: string;
+    prompt: string;
+    dataVariables?: Record<string, string>;
+  }>;
+}
+
+// Type for Supabase job updates
+interface JobDatabaseUpdate {
+  status?: string;
+  progress?: number;
+  message?: string | null;
+  image_urls?: string[] | null;
+  prompts?: Json | null;
+  updated_at?: string;
+}
+
+/**
+ * Create a new carousel generation job
+ */
+export const createJob = async (
+  name: string,
+  templateId: string,
+  templateName: string,
+  variants: number,
+  dataType: 'csv' | 'script' | 'natural-language',
+  dataContent: Record<string, unknown>[] | string
+): Promise<string> => {
+  try {
+    const jobId = nanoid();
+    const now = new Date().toISOString();
+    
+    const jobData: JobData = {
+      id: jobId,
+      name,
+      templateId,
+      templateName,
+      status: 'queued',
+      progress: 0,
+      variants,
+      dataType,
+      dataContent,
+      createdAt: now,
+      updatedAt: now
+    };
+    
+    // Store job in the Supabase database
+    const { error } = await supabase
+      .from('jobs')
+      .insert({
+        id: jobId,
+        name: name,
+        template_id: templateId,
+        template_name: templateName,
+        status: 'queued',
+        progress: 0,
+        data_type: dataType === 'natural-language' ? 'script' : dataType,
+        data_content: dataContent as Json,
+        created_at: now,
+        updated_at: now
+      });
+    
+    if (error) {
+      console.error("Error saving job to Supabase:", error);
+      throw error;
+    }
+    
+    // Also store in localStorage for offline/faster access
+    const existingJobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+    localStorage.setItem('carousel_jobs', JSON.stringify([...existingJobs, jobData]));
+    
+    // Start processing the job by calling the Edge Function
+    setTimeout(() => processJob(jobId), 1000);
+    
+    return jobId;
+  } catch (error) {
+    console.error("Error creating job:", error);
+    throw error;
+  }
+};
+
+/**
+ * Process a carousel generation job
+ */
+export const processJob = async (jobId: string): Promise<void> => {
+  try {
+    // Fetch the job data
+    const { data: job, error } = await supabase
+      .from('jobs')
+      .select()
+      .eq('id', jobId)
+      .single();
+    
+    if (error) {
+      console.error("Error fetching job:", error);
+      throw error;
+    }
+    
+    // Call the Supabase Edge Function to generate images
+    const response = await supabase.functions.invoke('generate-images', {
+      body: {
+        jobId: job.id,
+        templateId: job.template_id,
+        templateName: job.template_name,
+        numVariants: 1, // Default to 1 if not specified
+        dataType: job.data_type,
+        dataContent: job.data_content
+      }
+    });
+    
+    if (response.error) {
+      console.error("Error invoking Edge Function:", response.error);
+      // Update job status to failed
+      await supabase
+        .from('jobs')
+        .update({
+          status: 'failed',
+          message: `Failed to start processing: ${response.error.message}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', jobId);
+      
+      // Update local storage
+      updateJobInLocalStorage(jobId, {
+        status: 'failed',
+        message: `Failed to start processing: ${response.error.message}`
+      });
+      
+      dispatchJobUpdateEvent(jobId);
+      return;
+    }
+    
+    console.log("Edge Function invoked successfully, job is processing:", response.data);
+    
+    // Start polling for job updates
+    startPollingForJobUpdates(jobId);
+    
+  } catch (error) {
+    console.error("Error processing job:", error);
+    
+    // Update job status to failed
+    await supabase
+      .from('jobs')
+      .update({
+        status: 'failed',
+        message: `Error: ${error instanceof Error ? error.message : String(error)}`,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', jobId);
+    
+    // Update local storage
+    updateJobInLocalStorage(jobId, {
+      status: 'failed',
+      message: `Error: ${error instanceof Error ? error.message : String(error)}`
+    });
+    
+    dispatchJobUpdateEvent(jobId);
+  }
+};
+
+/**
+ * Start polling for job updates from the database
+ */
+const startPollingForJobUpdates = (jobId: string): void => {
+  const pollIntervalMs = 2000; // Poll every 2 seconds
+  const maxPollTimeMs = 30 * 60 * 1000; // Stop polling after 30 minutes to prevent memory leaks
+  const startTime = Date.now();
+  
+  const pollInterval = setInterval(async () => {
+    try {
+      // Check if we should stop polling
+      if (Date.now() - startTime > maxPollTimeMs) {
+        clearInterval(pollInterval);
+        console.log(`Stopped polling for job ${jobId} after reaching max poll time`);
+        return;
+      }
+      
+      // Fetch the latest job data
+      const { data: job, error } = await supabase
+        .from('jobs')
+        .select()
+        .eq('id', jobId)
+        .single();
+      
+      if (error) {
+        console.error("Error fetching job updates:", error);
+        return;
+      }
+      
+      // Update local storage with latest data
+      updateJobInLocalStorage(jobId, {
+        status: job.status,
+        progress: job.progress,
+        message: job.message,
+        image_urls: job.image_urls,
+        prompts: job.prompts
+      });
+      
+      // Dispatch event to notify UI of updates
+      dispatchJobUpdateEvent(jobId);
+      
+      // If job is complete or failed, stop polling
+      if (job.status === 'completed' || job.status === 'failed') {
+        clearInterval(pollInterval);
+        console.log(`Stopped polling for job ${jobId} as it is now ${job.status}`);
+      }
+    } catch (pollError) {
+      console.error("Error during job update polling:", pollError);
+    }
+  }, pollIntervalMs);
+};
+
+/**
+ * Get a job by ID
+ */
+export const getJob = (jobId: string): JobData | null => {
+  try {
+    const jobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+    return jobs.find(job => job.id === jobId) || null;
+  } catch (error) {
+    console.error("Error getting job:", error);
+    return null;
+  }
+};
+
+/**
+ * Get all jobs
+ */
+export const getAllJobs = (): JobData[] => {
+  try {
+    return JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+  } catch (error) {
+    console.error("Error getting all jobs:", error);
+    return [];
+  }
+};
+
+/**
+ * Update job status
+ */
+export const updateJobStatus = (
+  jobId: string, 
+  status: JobData['status'], 
+  progress: number,
+  message?: string,
+  imageUrls?: string[],
+  prompts?: Array<{
+    id: string;
+    prompt: string;
+    dataVariables?: Record<string, string>;
+  }>
+): void => {
+  try {
+    const jobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+    const updatedJobs = jobs.map(job => {
+      if (job.id === jobId) {
+        return {
+          ...job,
+          status,
+          progress,
+          message,
+          imageUrls,
+          prompts,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return job;
+    });
+    
+    localStorage.setItem('carousel_jobs', JSON.stringify(updatedJobs));
+    
+    // Dispatch an event to notify listeners of the job update
+    window.dispatchEvent(new CustomEvent('job-updated', { detail: { jobId, status, progress } }));
+  } catch (error) {
+    console.error("Error updating job status:", error);
+  }
+};
+
+/**
+ * Update a job in localStorage
+ */
+const updateJobInLocalStorage = (jobId: string, updates: Partial<JobData> | { 
+  status?: string;
+  progress?: number;
+  message?: string | null;
+  image_urls?: string[] | null;
+  prompts?: Json | null;
+}) => {
+  const jobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]') as JobData[];
+  const updatedJobs = jobs.map((job: JobData) => {
+    if (job.id === jobId) {
+      // Convert database field names to JobData field names
+      const jobUpdates: Partial<JobData> = {};
+      
+      if ('status' in updates) {
+        jobUpdates.status = updates.status as JobData['status'];
+      }
+      
+      if ('progress' in updates) {
+        jobUpdates.progress = updates.progress ?? 0;
+      }
+      
+      if ('message' in updates) {
+        jobUpdates.message = updates.message ?? undefined;
+      }
+      
+      if ('image_urls' in updates) {
+        jobUpdates.imageUrls = updates.image_urls ?? undefined;
+      }
+      
+      if ('prompts' in updates) {
+        // Handle prompts JSON parsing if needed
+        if (updates.prompts && typeof updates.prompts === 'string') {
+          try {
+            jobUpdates.prompts = JSON.parse(updates.prompts);
+          } catch (e) {
+            console.error('Error parsing prompts JSON:', e);
+          }
+        } else if (updates.prompts) {
+          jobUpdates.prompts = updates.prompts as unknown as Array<{
+            id: string;
+            prompt: string;
+            dataVariables?: Record<string, string>;
+          }>;
+        } else {
+          jobUpdates.prompts = undefined;
+        }
+      }
+      
+      return { ...job, ...jobUpdates };
+    }
+    return job;
+  });
+  
+  localStorage.setItem('carousel_jobs', JSON.stringify(updatedJobs));
+};
+
+/**
+ * Dispatch a job update event
+ */
+const dispatchJobUpdateEvent = (jobId: string) => {
+  window.dispatchEvent(new CustomEvent('job-updated', { 
+    detail: { jobId } 
+  }));
+}; 
