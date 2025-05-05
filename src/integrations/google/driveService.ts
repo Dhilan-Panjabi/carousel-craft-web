@@ -10,6 +10,12 @@ interface GoogleDriveFile {
   size?: string;
 }
 
+export interface CarouselImageExport {
+  url: string;
+  name: string;
+  index: number;
+}
+
 /**
  * Handles Google OAuth and Drive API integration
  */
@@ -367,6 +373,223 @@ class GoogleDriveService {
     }
     
     return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${this.accessToken}`;
+  }
+  
+  /**
+   * Creates a folder in Google Drive
+   * @param folderName Name of the folder to create
+   * @param parentFolderId Optional parent folder ID
+   * @returns The created folder's ID
+   */
+  public async createFolder(folderName: string, parentFolderId?: string): Promise<string> {
+    if (!this.isAuthenticated()) {
+      throw new Error("Not authenticated with Google Drive");
+    }
+    
+    try {
+      const metadata = {
+        name: folderName,
+        mimeType: this.FOLDER_MIME_TYPE,
+        parents: parentFolderId ? [parentFolderId] : undefined
+      };
+      
+      const response = await fetch(
+        'https://www.googleapis.com/drive/v3/files',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(metadata)
+        }
+      );
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error?.message || "Failed to create folder");
+      }
+      
+      const data = await response.json();
+      return data.id;
+    } catch (error) {
+      console.error("Error creating folder:", error);
+      toast.error("Failed to create folder in Google Drive", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+      throw error;
+    }
+  }
+  
+  /**
+   * Uploads a file to Google Drive
+   * @param file The file to upload (Blob or File)
+   * @param fileName Name to give the file in Drive
+   * @param folderId Optional folder ID to place the file in
+   * @returns The uploaded file's ID
+   */
+  public async uploadFile(file: Blob | File, fileName: string, folderId?: string): Promise<string> {
+    if (!this.isAuthenticated()) {
+      throw new Error("Not authenticated with Google Drive");
+    }
+    
+    try {
+      // First create the file metadata
+      const metadata = {
+        name: fileName,
+        parents: folderId ? [folderId] : undefined
+      };
+      
+      // Create the multipart request
+      const boundary = 'carousel_gen_boundary';
+      const delimiter = `--${boundary}`;
+      const closeDelimiter = `--${boundary}--`;
+      
+      // Build the multipart body
+      let requestBody = '';
+      
+      // Add the metadata part
+      requestBody += delimiter + '\r\n';
+      requestBody += 'Content-Type: application/json; charset=UTF-8\r\n\r\n';
+      requestBody += JSON.stringify(metadata) + '\r\n';
+      
+      // Add the file part
+      requestBody += delimiter + '\r\n';
+      requestBody += `Content-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`;
+      
+      // Convert the text to ArrayBuffer
+      const requestBodyStart = new TextEncoder().encode(requestBody);
+      const requestBodyEnd = new TextEncoder().encode('\r\n' + closeDelimiter);
+      
+      // Get file content as ArrayBuffer
+      const fileArrayBuffer = await file.arrayBuffer();
+      
+      // Combine all parts
+      const combinedBuffer = new Uint8Array(
+        requestBodyStart.byteLength + fileArrayBuffer.byteLength + requestBodyEnd.byteLength
+      );
+      combinedBuffer.set(requestBodyStart, 0);
+      combinedBuffer.set(new Uint8Array(fileArrayBuffer), requestBodyStart.byteLength);
+      combinedBuffer.set(requestBodyEnd, requestBodyStart.byteLength + fileArrayBuffer.byteLength);
+      
+      // Send the request
+      const response = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+            'Content-Length': combinedBuffer.byteLength.toString()
+          },
+          body: combinedBuffer
+        }
+      );
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error?.message || "Failed to upload file");
+      }
+      
+      const data = await response.json();
+      return data.id;
+    } catch (error) {
+      console.error("Error uploading file:", error);
+      toast.error("Failed to upload file to Google Drive", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+      throw error;
+    }
+  }
+  
+  /**
+   * Fetches an image from a URL and returns it as a Blob
+   * @param imageUrl URL of the image to fetch
+   * @returns Image as a Blob
+   */
+  private async fetchImageAsBlob(imageUrl: string): Promise<Blob> {
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch image: ${response.status}`);
+      }
+      return await response.blob();
+    } catch (error) {
+      console.error("Error fetching image:", error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Exports a carousel to Google Drive
+   * @param carouselName Name of the carousel (will be used as folder name)
+   * @param images Array of carousel images with URLs and names
+   * @returns The ID of the created folder
+   */
+  public async exportCarouselToDrive(carouselName: string, images: CarouselImageExport[]): Promise<string> {
+    if (!this.isAuthenticated()) {
+      throw new Error("Not authenticated with Google Drive");
+    }
+    
+    if (images.length === 0) {
+      throw new Error("No images to export");
+    }
+    
+    try {
+      // Create a folder for the carousel
+      const folderName = `Carousel - ${carouselName} - ${new Date().toISOString().split('T')[0]}`;
+      const folderId = await this.createFolder(folderName);
+      
+      // Track progress for toast updates
+      let uploadedCount = 0;
+      const totalImages = images.length;
+      
+      // Show initial toast
+      toast.promise(
+        Promise.resolve(true),
+        {
+          loading: `Creating carousel in Google Drive (0/${totalImages})`,
+          success: `Created carousel folder: ${folderName}`,
+          error: "Failed to create carousel folder"
+        }
+      );
+      
+      // Process each image in sequence
+      for (const image of images) {
+        // Format the filename with padding for sequence
+        const paddedIndex = String(image.index + 1).padStart(2, '0');
+        const fileName = `${paddedIndex}_${image.name || 'Image'}.png`;
+        
+        // Fetch the image
+        const imageBlob = await this.fetchImageAsBlob(image.url);
+        
+        // Upload to Drive
+        await this.uploadFile(imageBlob, fileName, folderId);
+        
+        // Update progress
+        uploadedCount++;
+        
+        // Update toast for every 3rd image or the last one
+        if (uploadedCount === totalImages || uploadedCount % 3 === 0) {
+          toast.info(`Uploading carousel to Google Drive`, {
+            description: `Progress: ${uploadedCount}/${totalImages} images uploaded`
+          });
+        }
+      }
+      
+      // Final success toast
+      toast.success(`Carousel exported to Google Drive`, {
+        description: `Successfully uploaded ${totalImages} images to folder "${folderName}"`
+      });
+      
+      return folderId;
+    } catch (error) {
+      console.error("Error exporting carousel to Drive:", error);
+      toast.error("Failed to export carousel to Google Drive", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+      throw error;
+    }
   }
   
   /**

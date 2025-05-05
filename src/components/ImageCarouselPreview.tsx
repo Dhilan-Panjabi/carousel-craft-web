@@ -8,7 +8,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Trash } from "lucide-react";
+import { Trash, Download, Share2 } from "lucide-react";
 import {
   Carousel,
   CarouselContent,
@@ -17,6 +17,10 @@ import {
   CarouselPrevious,
   type CarouselApi,
 } from "@/components/ui/carousel";
+import driveService, { CarouselImageExport } from "@/integrations/google/driveService";
+import { toast } from "sonner";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 export interface CarouselImage {
   id: string;
@@ -38,10 +42,56 @@ export function ImageCarouselPreview({
   onRemoveImage,
 }: ImageCarouselPreviewProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [carouselName, setCarouselName] = useState("My TikTok Carousel");
+  const [isExporting, setIsExporting] = useState(false);
 
   const handleCarouselChange = (api: CarouselApi) => {
     if (api) {
       setActiveIndex(api.selectedScrollSnap());
+    }
+  };
+
+  const handleExportToDrive = async () => {
+    if (!images.length) {
+      toast.error("No images to export");
+      return;
+    }
+
+    try {
+      setIsExporting(true);
+
+      // First check if authenticated
+      if (!driveService.isAuthenticated()) {
+        // Save the current state in localStorage before redirecting
+        localStorage.setItem('carousel_pending_export', JSON.stringify({
+          images,
+          name: carouselName
+        }));
+        
+        // Initiate OAuth flow
+        toast.info("Please authenticate with Google Drive");
+        driveService.initiateOAuth();
+        return;
+      }
+
+      // Prepare images for export
+      const exportImages: CarouselImageExport[] = images.map((img, index) => ({
+        url: img.url,
+        name: img.jobName || `carousel_image_${index}`,
+        index
+      }));
+
+      // Export to Drive
+      await driveService.exportCarouselToDrive(carouselName, exportImages);
+      
+      toast.success("Carousel exported to Google Drive");
+    } catch (error) {
+      console.error("Error exporting to Drive:", error);
+      toast.error("Failed to export carousel", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -103,6 +153,29 @@ export function ImageCarouselPreview({
             </div>
           )}
         </div>
+
+        {images.length > 0 && (
+          <div className="mt-4 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="carousel-name">Carousel Name</Label>
+              <Input 
+                id="carousel-name" 
+                value={carouselName} 
+                onChange={(e) => setCarouselName(e.target.value)} 
+                placeholder="Enter a name for your carousel" 
+              />
+            </div>
+            
+            <Button 
+              className="w-full"
+              onClick={handleExportToDrive}
+              disabled={isExporting || !images.length}
+            >
+              <Share2 className="h-4 w-4 mr-2" />
+              {isExporting ? "Exporting to Drive..." : "Export to Google Drive"}
+            </Button>
+          </div>
+        )}
 
         <DialogFooter className="sm:justify-between">
           <DialogClose asChild>
