@@ -20,7 +20,9 @@ export function useRealtime<T>(
     // Initial data fetch
     const fetchData = async () => {
       try {
-        let query = supabase.from(table).select('*');
+        let query = supabase
+          .from(table)
+          .select('*') as any;
         
         if (filter?.column && filter?.value !== undefined) {
           query = query.eq(filter.column, filter.value);
