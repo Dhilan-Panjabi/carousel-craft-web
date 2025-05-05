@@ -21,8 +21,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, FileUp, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { parseCSV } from "@/lib/csvParse";
-import supabase from "@/supabase/supabaseClient";
+import { parseCSV, CSVRow } from "@/lib/csvParse";
+import { supabase } from "@/integrations/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const mockTemplates = [
@@ -37,7 +37,7 @@ export default function GenerateWizardPage() {
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [numVariants, setNumVariants] = useState(1);
   const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [csvData, setCsvData] = useState<any[] | null>(null);
+  const [csvData, setCsvData] = useState<CSVRow[] | null>(null);
   const [scriptContent, setScriptContent] = useState("");
   const [isDataSource, setIsDataSource] = useState<"csv" | "script">("csv");
   const [isSubmitting, setIsSubmitting] = useState(false);
