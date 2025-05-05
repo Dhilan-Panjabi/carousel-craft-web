@@ -17,6 +17,7 @@ export interface Database {
           thumbnail_url: string | null
           yaml_config: string | null
           slides: Json | null
+          additional_images: Json | null
           created_at: string
           updated_at: string
         }
@@ -27,6 +28,7 @@ export interface Database {
           thumbnail_url?: string | null
           yaml_config?: string | null
           slides?: Json | null
+          additional_images?: Json | null
           created_at?: string
           updated_at?: string
         }
@@ -37,6 +39,7 @@ export interface Database {
           thumbnail_url?: string | null
           yaml_config?: string | null
           slides?: Json | null
+          additional_images?: Json | null
           created_at?: string
           updated_at?: string
         }

@@ -30,35 +30,67 @@ export interface Template {
   updatedAt: string;
   // Optional YAML config serialized from slides
   yamlConfig?: string;
+  // Additional images for the template
+  additionalImages?: string[];
+  // Whether this template is marked as a favorite
+  favorite?: boolean;
 }
 
 /**
  * Converts a Template object to a format ready for database storage
  */
 const templateToDbObject = (template: Partial<Template>): Database['public']['Tables']['templates']['Insert'] => {
-  return {
+  console.log('Converting template to DB object:', template);
+  
+  const dbObject = {
     name: template.name!,
     description: template.description || null,
     thumbnail_url: template.thumbnailUrl || null,
     yaml_config: template.yamlConfig || null,
-    slides: template.slides ? JSON.stringify(template.slides) : null
+    slides: template.slides ? JSON.stringify(template.slides) : null,
+    additional_images: template.additionalImages ? JSON.stringify(template.additionalImages) : null,
+    favorite: template.favorite || false
   };
+  
+  console.log('DB object:', dbObject);
+  return dbObject;
 };
 
 /**
  * Maps a database template record to the Template interface
  */
 const dbObjectToTemplate = (record: Database['public']['Tables']['templates']['Row']): Template => {
-  return {
+  console.log('Converting DB record to template:', record);
+  
+  let additionalImages: string[] = [];
+  try {
+    if (record.additional_images) {
+      additionalImages = JSON.parse(record.additional_images as string);
+      if (!Array.isArray(additionalImages)) {
+        console.warn('additional_images is not an array:', additionalImages);
+        additionalImages = [];
+      }
+    }
+  } catch (error) {
+    console.error('Error parsing additional_images:', error);
+    additionalImages = [];
+  }
+  
+  const template = {
     id: record.id,
     name: record.name,
     description: record.description || '',
     thumbnailUrl: record.thumbnail_url || '',
     yamlConfig: record.yaml_config || undefined,
     slides: record.slides ? JSON.parse(record.slides as string) : [],
+    additionalImages,
+    favorite: record.favorite || false,
     createdAt: record.created_at,
     updatedAt: record.updated_at
   };
+  
+  console.log('Converted template:', template);
+  return template;
 };
 
 /**
@@ -256,6 +288,25 @@ export const deleteTemplate = async (id: string): Promise<void> => {
     if (error) throw error;
   } catch (error) {
     console.error('Error deleting template:', error);
+    throw error;
+  }
+};
+
+// Add toggleFavorite function to update favorite status
+export const toggleFavorite = async (id: string, favorite: boolean): Promise<Template> => {
+  try {
+    const { data, error } = await supabase
+      .from('templates')
+      .update({ favorite })
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return dbObjectToTemplate(data);
+  } catch (error) {
+    console.error('Error toggling favorite status:', error);
     throw error;
   }
 }; 

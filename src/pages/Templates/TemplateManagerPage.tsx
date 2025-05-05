@@ -2,13 +2,15 @@ import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, Plus, ImageIcon, Cloud, Search, Folder, ChevronRight, ArrowLeft, Check } from "lucide-react";
+import { Upload, Plus, ImageIcon, Cloud, Search, Folder, ChevronRight, ArrowLeft, Check, PlusCircle, Trash2, X, ChevronLeft, Star } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger
+  DialogTrigger,
+  DialogDescription,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +20,9 @@ import {
   getAllTemplates, 
   saveTemplate, 
   uploadTemplateImage,
+  updateTemplate,
+  deleteTemplate,
+  toggleFavorite,
   Template
 } from "@/integrations/supabase/templateService";
 import driveService from "@/integrations/google/driveService";
@@ -34,6 +39,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import "./TemplateManagerPage.css";
 
 interface GoogleDriveFile {
   id: string;
@@ -70,6 +76,25 @@ export default function TemplateManagerPage() {
   const [newTemplateFile, setNewTemplateFile] = useState<File | null>(null);
   const [newTemplateYaml, setNewTemplateYaml] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  // Template edit state
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [additionalImages, setAdditionalImages] = useState<File[]>([]);
+  const [existingAdditionalImages, setExistingAdditionalImages] = useState<string[]>([]);
+
+  // Preview state
+  const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
+  const [previewImageIndex, setPreviewImageIndex] = useState(0);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+
+  // Delete state
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState<Template | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Load templates on mount
   useEffect(() => {
@@ -324,6 +349,218 @@ export default function TemplateManagerPage() {
       });
     } finally {
       setIsUploading(false);
+    }
+  };
+
+  const handleEditTemplate = (template: Template) => {
+    setSelectedTemplate(template);
+    setEditName(template.name);
+    setEditDescription(template.description || "");
+    setExistingAdditionalImages(template.additionalImages || []);
+    setIsEditDialogOpen(true);
+  };
+
+  const handleAdditionalImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files?.length) return;
+    
+    // Convert FileList to array and add to state
+    const newFiles = Array.from(files);
+    setAdditionalImages(prev => [...prev, ...newFiles]);
+  };
+
+  const removeAdditionalImage = (index: number) => {
+    setAdditionalImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeExistingImage = (index: number) => {
+    setExistingAdditionalImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveEditedTemplate = async () => {
+    if (!selectedTemplate) return;
+    
+    setIsUploading(true);
+    
+    try {
+      let updatedImageUrl = selectedTemplate.thumbnailUrl;
+      let allAdditionalImages = [...existingAdditionalImages];
+      
+      // If a new main image was selected, upload it
+      if (editFile) {
+        updatedImageUrl = await uploadTemplateImage(
+          editFile, 
+          editFile.name
+        );
+      }
+      
+      // Upload any new additional images
+      if (additionalImages.length > 0) {
+        const uploadPromises = additionalImages.map(file => 
+          uploadTemplateImage(file, file.name)
+        );
+        
+        const uploadedUrls = await Promise.all(uploadPromises);
+        allAdditionalImages = [...allAdditionalImages, ...uploadedUrls];
+      }
+      
+      // Update template in database
+      await updateTemplate(selectedTemplate.id, {
+        name: editName,
+        description: editDescription,
+        thumbnailUrl: updatedImageUrl,
+        additionalImages: allAdditionalImages
+      });
+      
+      // Reset form and close dialog
+      setIsEditDialogOpen(false);
+      setSelectedTemplate(null);
+      setEditFile(null);
+      setAdditionalImages([]);
+      setExistingAdditionalImages([]);
+      
+      // Refresh templates list
+      await loadTemplates();
+      
+      toast.success("Template updated", {
+        description: "Your changes have been saved"
+      });
+    } catch (error) {
+      console.error("Error updating template:", error);
+      toast.error("Failed to update template", {
+        description: error instanceof Error ? error.message : "Please try again"
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleEditFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files?.length) return;
+    
+    setEditFile(files[0]);
+  };
+
+  const handleViewTemplate = (template: Template) => {
+    console.log("Template to preview:", template);
+    console.log("Image URL:", template.thumbnailUrl);
+    console.log("Additional images:", template.additionalImages);
+    
+    setPreviewTemplate(template);
+    setPreviewImageIndex(0);
+    setIsPreviewOpen(true);
+  };
+
+  const getTemplateAllImages = (template: Template): string[] => {
+    const allImages: string[] = [];
+    
+    // Add the main thumbnail if it exists and is a valid URL
+    if (template.thumbnailUrl && isValidImageUrl(template.thumbnailUrl)) {
+      allImages.push(template.thumbnailUrl);
+    }
+    
+    // Add additional images if they exist
+    try {
+      if (template.additionalImages && Array.isArray(template.additionalImages)) {
+        // Filter out any non-string or empty values and ensure they're valid URLs
+        const validAdditionalImages = template.additionalImages
+          .filter(url => typeof url === 'string' && url.trim() !== '' && isValidImageUrl(url));
+        
+        allImages.push(...validAdditionalImages);
+      }
+    } catch (error) {
+      console.error('Error parsing additional images:', error);
+    }
+    
+    return allImages;
+  };
+
+  const isValidImageUrl = (url: string): boolean => {
+    // Basic check - does it start with http/https and end with common image extensions
+    try {
+      const parsedUrl = new URL(url);
+      return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const handleNextImage = () => {
+    if (!previewTemplate) return;
+    
+    const allImages = getTemplateAllImages(previewTemplate);
+    setPreviewImageIndex(prev => (prev + 1) % allImages.length);
+  };
+
+  const handlePrevImage = () => {
+    if (previewTemplate) {
+      setPreviewImageIndex((prev) => 
+        prev === 0 ? getTemplateAllImages(previewTemplate).length - 1 : prev - 1
+      );
+    }
+  };
+
+  const handleDeleteTemplate = (template: Template, event: React.MouseEvent) => {
+    // Prevent the event from bubbling up to the parent (which would open the preview)
+    event.stopPropagation();
+    setTemplateToDelete(template);
+    setIsDeleteDialogOpen(true);
+  };
+  
+  const handleConfirmDelete = async () => {
+    if (!templateToDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      await deleteTemplate(templateToDelete.id);
+      
+      // Close dialog and reset state
+      setIsDeleteDialogOpen(false);
+      setTemplateToDelete(null);
+      
+      // Refresh templates
+      await loadTemplates();
+      
+      toast.success("Template deleted", {
+        description: "The template has been permanently deleted"
+      });
+    } catch (error) {
+      console.error("Error deleting template:", error);
+      toast.error("Failed to delete template", {
+        description: error instanceof Error ? error.message : "Please try again"
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+  
+  const handleToggleFavorite = async (template: Template, event: React.MouseEvent) => {
+    // Prevent the event from bubbling up to the parent (which would open the preview)
+    event.stopPropagation();
+    
+    try {
+      // Toggle favorite status
+      const updatedTemplate = await toggleFavorite(template.id, !template.favorite);
+      
+      // Update the local templates array
+      setTemplates(prev => 
+        prev.map(t => t.id === updatedTemplate.id ? updatedTemplate : t)
+      );
+      
+      toast.success(
+        updatedTemplate.favorite ? "Added to favorites" : "Removed from favorites",
+        {
+          description: updatedTemplate.favorite 
+            ? `${updatedTemplate.name} has been added to your favorites`
+            : `${updatedTemplate.name} has been removed from your favorites`
+        }
+      );
+    } catch (error) {
+      console.error("Error toggling favorite:", error);
+      toast.error("Failed to update favorite status", {
+        description: "Please try again"
+      });
     }
   };
 
@@ -628,25 +865,78 @@ export default function TemplateManagerPage() {
             <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {templates.map((template) => (
                 <Card key={template.id} className="overflow-hidden">
-                  <div className="aspect-video bg-muted relative">
-                    <img
-                      src={template.thumbnailUrl}
-                      alt={template.name}
-                      className="object-cover w-full h-full"
-                    />
+                  <div 
+                    className="aspect-video bg-muted relative cursor-pointer"
+                    onClick={() => handleViewTemplate(template)}
+                  >
+                    {template.thumbnailUrl ? (
+                      <>
+                        <img
+                          src={template.thumbnailUrl}
+                          alt={template.name}
+                          className="object-contain w-full h-full"
+                          onError={(e) => {
+                            console.error(`Image failed to load: ${template.thumbnailUrl}`);
+                            // Set a data URI fallback instead of an external URL
+                            (e.target as HTMLImageElement).src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22400%22%20height%3D%22225%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22400%22%20height%3D%22225%22%20fill%3D%22%23eee%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22112.5%22%20font-family%3D%22Arial%22%20font-size%3D%2216%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%20fill%3D%22%23999%22%3EPreview%20Not%20Available%3C%2Ftext%3E%3C%2Fsvg%3E';
+                            // Keep the alt text for accessibility
+                            (e.target as HTMLImageElement).alt = 'Image not available';
+                            // Add a class to show we're in error state
+                            e.currentTarget.parentElement?.classList.add('image-error');
+                          }}
+                          loading="lazy"
+                        />
+                        <div className="image-error-label">Image not available</div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <ImageIcon className="h-16 w-16 text-muted-foreground opacity-50" />
+                      </div>
+                    )}
+                    
+                    {/* Favorite button */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className={`absolute top-2 left-2 h-8 w-8 rounded-full ${template.favorite ? 'text-yellow-500 bg-white bg-opacity-70 hover:bg-white hover:bg-opacity-100' : 'text-muted-foreground bg-black bg-opacity-20 hover:bg-black hover:bg-opacity-30'}`}
+                      onClick={(e) => handleToggleFavorite(template, e)}
+                    >
+                      <Star className={`h-4 w-4 ${template.favorite ? 'fill-yellow-500' : ''}`} />
+                    </Button>
+                    
+                    {/* Use nullish coalescing for safer access */}
+                    {(template.additionalImages ?? []).length > 0 && (
+                      <div className="absolute bottom-2 right-2 bg-background rounded-full p-1 shadow">
+                        <Badge variant="secondary" className="flex items-center gap-1">
+                          <ImageIcon className="h-3 w-3" />
+                          {(template.additionalImages ?? []).length + 1}
+                        </Badge>
+                      </div>
+                    )}
                   </div>
                   <CardContent className="p-4">
                     <div className="flex justify-between items-start mb-2">
                       <div>
                         <h3 className="font-medium text-lg">{template.name}</h3>
                         <p className="text-sm text-muted-foreground">
-                          {template.description}
+                          {template.description || "No description"}
                         </p>
                       </div>
                     </div>
-                    <div className="flex justify-end mt-4">
-                      <Button variant="outline" size="sm">
+                    <div className="flex justify-end mt-4 gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => handleEditTemplate(template)}
+                      >
                         Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={(e) => handleDeleteTemplate(template, e)}
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>
                   </CardContent>
@@ -677,14 +967,440 @@ export default function TemplateManagerPage() {
         </TabsContent>
         
         <TabsContent value="favorites">
-          <div className="text-center py-12">
-            <h3 className="text-lg font-medium">No favorite templates</h3>
-            <p className="text-sm text-muted-foreground">
-              Mark templates as favorites and they'll appear here
-            </p>
-          </div>
+          {templates.filter(t => t.favorite).length > 0 ? (
+            <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              {templates.filter(t => t.favorite).map((template) => (
+                <Card key={template.id} className="overflow-hidden">
+                  <div 
+                    className="aspect-video bg-muted relative cursor-pointer"
+                    onClick={() => handleViewTemplate(template)}
+                  >
+                    {template.thumbnailUrl ? (
+                      <>
+                        <img
+                          src={template.thumbnailUrl}
+                          alt={template.name}
+                          className="object-contain w-full h-full"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22400%22%20height%3D%22225%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22400%22%20height%3D%22225%22%20fill%3D%22%23eee%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22112.5%22%20font-family%3D%22Arial%22%20font-size%3D%2216%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%20fill%3D%22%23999%22%3EPreview%20Not%20Available%3C%2Ftext%3E%3C%2Fsvg%3E';
+                            e.currentTarget.parentElement?.classList.add('image-error');
+                          }}
+                          loading="lazy"
+                        />
+                        <div className="image-error-label">Image not available</div>
+                      </>
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <ImageIcon className="h-16 w-16 text-muted-foreground opacity-50" />
+                      </div>
+                    )}
+                    
+                    {/* Favorite button */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-2 left-2 h-8 w-8 rounded-full text-yellow-500 bg-white bg-opacity-70 hover:bg-white hover:bg-opacity-100"
+                      onClick={(e) => handleToggleFavorite(template, e)}
+                    >
+                      <Star className="h-4 w-4 fill-yellow-500" />
+                    </Button>
+                    
+                    {(template.additionalImages ?? []).length > 0 && (
+                      <div className="absolute bottom-2 right-2 bg-background rounded-full p-1 shadow">
+                        <Badge variant="secondary" className="flex items-center gap-1">
+                          <ImageIcon className="h-3 w-3" />
+                          {(template.additionalImages ?? []).length + 1}
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
+                  <CardContent className="p-4">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h3 className="font-medium text-lg">{template.name}</h3>
+                        <p className="text-sm text-muted-foreground">
+                          {template.description || "No description"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex justify-end mt-4 gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => handleEditTemplate(template)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={(e) => handleDeleteTemplate(template, e)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <h3 className="text-lg font-medium">No favorite templates</h3>
+              <p className="text-sm text-muted-foreground">
+                Mark templates as favorites and they'll appear here
+              </p>
+            </div>
+          )}
         </TabsContent>
       </Tabs>
+
+      {/* Template Edit Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Template</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-name">Template Name</Label>
+              <Input 
+                id="edit-name" 
+                placeholder="Enter template name" 
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-description">Description</Label>
+              <Textarea 
+                id="edit-description" 
+                placeholder="Describe your template" 
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Primary Image</Label>
+              {selectedTemplate && (
+                <div className="mb-4 border rounded-md overflow-hidden">
+                  <img 
+                    src={editFile ? URL.createObjectURL(editFile) : selectedTemplate.thumbnailUrl} 
+                    alt={selectedTemplate.name}
+                    className="w-full h-48 object-contain bg-muted"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22400%22%20height%3D%22225%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22400%22%20height%3D%22225%22%20fill%3D%22%23eee%22%2F%3E%3Ctext%20x%3D%22200%22%20y%3D%22112.5%22%20font-family%3D%22Arial%22%20font-size%3D%2216%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%20fill%3D%22%23999%22%3EPreview%20Not%20Available%3C%2Ftext%3E%3C%2Fsvg%3E';
+                    }}
+                  />
+                </div>
+              )}
+              <div 
+                className="flex items-center justify-center border-2 border-dashed rounded-md p-6 cursor-pointer"
+                onClick={() => document.getElementById('edit-image')?.click()}
+              >
+                <div className="space-y-1 text-center">
+                  {editFile ? (
+                    <>
+                      <p className="text-sm font-medium">{editFile.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(editFile.size / 1024).toFixed(2)} KB
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <ImageIcon className="mx-auto h-12 w-12 text-muted-foreground" />
+                      <div className="text-sm text-muted-foreground">
+                        Upload new primary image (optional)
+                      </div>
+                    </>
+                  )}
+                  <Input 
+                    id="edit-image" 
+                    type="file" 
+                    className="hidden" 
+                    accept="image/*"
+                    onChange={handleEditFileUpload}
+                  />
+                  <Button 
+                    variant="secondary" 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      document.getElementById('edit-image')?.click();
+                    }}
+                  >
+                    Choose File
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            {/* Additional Images Section */}
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <Label>Additional Images</Label>
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="flex items-center gap-1 text-xs"
+                  onClick={() => document.getElementById('additional-images')?.click()}
+                >
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  Add Image
+                  <Input 
+                    id="additional-images" 
+                    type="file" 
+                    multiple
+                    className="hidden" 
+                    accept="image/*"
+                    onChange={handleAdditionalImageUpload}
+                  />
+                </Button>
+              </div>
+              
+              {/* Display existing additional images */}
+              {existingAdditionalImages.length > 0 && (
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  {existingAdditionalImages.map((url, index) => (
+                    <div key={`existing-${index}`} className="relative border rounded-md overflow-hidden">
+                      <img 
+                        src={url} 
+                        alt={`Additional ${index + 1}`}
+                        className="w-full h-24 object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22200%22%20height%3D%22100%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22200%22%20height%3D%22100%22%20fill%3D%22%23eee%22%2F%3E%3Ctext%20x%3D%22100%22%20y%3D%2250%22%20font-family%3D%22Arial%22%20font-size%3D%2212%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%20fill%3D%22%23999%22%3EImage%20Not%20Found%3C%2Ftext%3E%3C%2Fsvg%3E';
+                        }}
+                      />
+                      <Button 
+                        variant="destructive" 
+                        size="icon"
+                        className="absolute top-1 right-1 h-6 w-6"
+                        onClick={() => removeExistingImage(index)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {/* Display newly added additional images */}
+              {additionalImages.length > 0 && (
+                <div className="grid grid-cols-2 gap-2">
+                  {additionalImages.map((file, index) => (
+                    <div key={`new-${index}`} className="relative border rounded-md overflow-hidden">
+                      <img 
+                        src={URL.createObjectURL(file)} 
+                        alt={file.name}
+                        className="w-full h-24 object-cover"
+                      />
+                      <Button 
+                        variant="destructive" 
+                        size="icon"
+                        className="absolute top-1 right-1 h-6 w-6"
+                        onClick={() => removeAdditionalImage(index)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                      <div className="absolute bottom-0 left-0 right-0 bg-background/80 p-1">
+                        <p className="text-xs truncate">{file.name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {existingAdditionalImages.length === 0 && additionalImages.length === 0 && (
+                <div className="text-center py-6 border-2 border-dashed rounded-md">
+                  <p className="text-sm text-muted-foreground">No additional images</p>
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => document.getElementById('additional-images')?.click()}
+                  >
+                    Add Images
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setIsEditDialogOpen(false);
+                setSelectedTemplate(null);
+                setEditFile(null);
+                setAdditionalImages([]);
+                setExistingAdditionalImages([]);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              onClick={handleSaveEditedTemplate} 
+              disabled={isUploading}
+            >
+              {isUploading ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview Dialog */}
+      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <DialogContent className="sm:max-w-[800px] p-0">
+          <DialogHeader className="p-4 pb-0">
+            <DialogTitle>{previewTemplate?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            {previewTemplate && getTemplateAllImages(previewTemplate).length > 0 && (
+              <>
+                <div className="aspect-video bg-muted overflow-hidden relative">
+                  {/* Show loading state */}
+                  <div className="absolute inset-0 flex items-center justify-center z-0">
+                    <div className="animate-pulse flex space-x-4">
+                      <div className="rounded-full bg-muted-foreground/20 h-10 w-10"></div>
+                    </div>
+                  </div>
+                  
+                  <img
+                    key={`preview-${previewImageIndex}-${getTemplateAllImages(previewTemplate)[previewImageIndex]}`}
+                    src={getTemplateAllImages(previewTemplate)[previewImageIndex]}
+                    alt={`Image ${previewImageIndex + 1} of ${getTemplateAllImages(previewTemplate).length}`}
+                    className="w-full h-full object-contain relative z-10"
+                    onError={(e) => {
+                      console.error(`Failed to load preview image: ${getTemplateAllImages(previewTemplate)[previewImageIndex]}`);
+                      // Use data URI for fallback
+                      (e.target as HTMLImageElement).src = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20width%3D%22800%22%20height%3D%22450%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%3Crect%20width%3D%22800%22%20height%3D%22450%22%20fill%3D%22%23eee%22%2F%3E%3Ctext%20x%3D%22400%22%20y%3D%22225%22%20font-family%3D%22Arial%22%20font-size%3D%2218%22%20text-anchor%3D%22middle%22%20alignment-baseline%3D%22middle%22%20fill%3D%22%23999%22%3EImage%20Not%20Available%3C%2Ftext%3E%3C%2Fsvg%3E';
+                      // Keep the alt text for accessibility
+                      (e.target as HTMLImageElement).alt = 'Image not available';
+                      // Show error state
+                      e.currentTarget.parentElement?.classList.add('preview-error');
+                    }}
+                  />
+                  
+                  {/* Preview error label */}
+                  <div className="preview-error-label">Image not available</div>
+                  
+                  {/* Image info overlay */}
+                  <div className="absolute bottom-0 left-0 right-0 bg-background/70 px-2 py-1 text-xs z-20">
+                    Image {previewImageIndex + 1} of {getTemplateAllImages(previewTemplate).length}
+                    {previewImageIndex === 0 ? ' (Primary)' : ' (Additional)'}
+                  </div>
+                </div>
+                
+                {/* Navigation buttons */}
+                {getTemplateAllImages(previewTemplate).length > 1 && (
+                  <>
+                    <div className="absolute top-1/2 left-2 transform -translate-y-1/2 z-30">
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        className="rounded-full shadow-sm opacity-80 hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handlePrevImage();
+                        }}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="absolute top-1/2 right-2 transform -translate-y-1/2 z-30">
+                      <Button
+                        variant="secondary"
+                        size="icon"
+                        className="rounded-full shadow-sm opacity-80 hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleNextImage();
+                        }}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </>
+                )}
+                
+                {/* Indicator dots */}
+                {getTemplateAllImages(previewTemplate).length > 1 && (
+                  <div className="absolute bottom-8 left-0 right-0 flex justify-center gap-1 z-30">
+                    {getTemplateAllImages(previewTemplate).map((_, index) => (
+                      <Button
+                        key={`indicator-${index}`}
+                        variant="secondary"
+                        size="icon"
+                        className={`w-2 h-2 p-0 rounded-full ${index === previewImageIndex ? 'bg-primary' : 'bg-muted'}`}
+                        onClick={() => setPreviewImageIndex(index)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            {previewTemplate && getTemplateAllImages(previewTemplate).length === 0 && (
+              <div className="flex items-center justify-center h-64">
+                <p className="text-muted-foreground">No images available for this template</p>
+              </div>
+            )}
+          </div>
+          <div className="p-4 flex justify-between items-center">
+            <div>
+              <p className="text-sm text-muted-foreground">
+                {previewTemplate?.description || "No description"}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => {
+                  setIsPreviewOpen(false);
+                  if (previewTemplate) {
+                    handleEditTemplate(previewTemplate);
+                  }
+                }}
+              >
+                Edit Template
+              </Button>
+              <Button 
+                variant="default" 
+                size="sm"
+                onClick={() => setIsPreviewOpen(false)}
+              >
+                Close
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Delete Template</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{templateToDelete?.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2 pt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setIsDeleteDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleConfirmDelete}
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
