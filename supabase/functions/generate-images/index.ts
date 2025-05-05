@@ -228,6 +228,35 @@ Deno.serve(async (req) => {
     const imageUrls: string[] = [];
     let completedImages = 0;
     
+    // First, create prompt entries in the database to satisfy the foreign key constraint
+    try {
+      const promptEntries = Array.from({ length: generatedImages.length }, (_, index) => {
+        const promptId = `prompt-${templateId}-${index}`;
+        return {
+          id: promptId,
+          job_id: jobId,
+          prompt_text: `Variation ${index + 1} of ${templateName}`,
+          data_variables: null,
+          created_at: new Date().toISOString()
+        };
+      });
+      
+      console.log(`Creating ${promptEntries.length} prompt entries in database`);
+      const { error: promptError } = await supabase
+        .from('carousel_prompts')
+        .insert(promptEntries);
+        
+      if (promptError) {
+        console.error(`Error creating prompt entries: ${JSON.stringify(promptError)}`);
+        // Continue anyway, as we'll handle individual image inserts later
+      } else {
+        console.log('Prompt entries created successfully');
+      }
+    } catch (err) {
+      console.error('Error creating prompt entries:', err);
+      // Continue with processing images
+    }
+
     for (const [index, imageResult] of generatedImages.entries()) {
       try {
         console.log(`Processing image ${index + 1} of ${generatedImages.length}`);
@@ -329,13 +358,15 @@ Deno.serve(async (req) => {
         // Save image to database
         try {
           console.log(`Saving image record to database: ${index + 1}`);
+          // Use the correct prompt ID format to match what we created earlier
+          const promptId = `prompt-${templateId}-${index}`;
           const imageId = `image-${templateId}-${index}`;
           const { error: dbError } = await supabase
             .from('carousel_images')
             .insert({
               id: imageId,
               job_id: jobId,
-              prompt_id: imageId, // Not using prompts anymore, but keeping schema compatibility
+              prompt_id: promptId, // Use the prompt ID that matches our entries in carousel_prompts
               image_url: imageUrl,
               width: 1024,
               height: 1024,
