@@ -78,6 +78,8 @@ export interface Database {
           name: string
           template_id: string
           template_name: string
+          template_description: string | null
+          template_image_url: string | null
           status: string
           progress: number
           message: string | null

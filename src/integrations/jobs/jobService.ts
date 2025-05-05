@@ -8,6 +8,8 @@ export interface JobData {
   name: string;
   templateId: string;
   templateName: string;
+  templateDescription: string;
+  templateImageUrl: string;
   status: 'queued' | 'processing' | 'completed' | 'failed';
   progress: number;
   variants: number;
@@ -49,11 +51,27 @@ export const createJob = async (
     const jobId = nanoid();
     const now = new Date().toISOString();
     
+    // Fetch template details to get the thumbnail URL
+    const { data: templateData, error: templateError } = await supabase
+      .from('templates')
+      .select('thumbnail_url, description')
+      .eq('id', templateId)
+      .single();
+    
+    if (templateError) {
+      console.error("Error fetching template details:", templateError);
+    }
+    
+    const templateImageUrl = templateData?.thumbnail_url || "";
+    const templateDescription = templateData?.description || "";
+    
     const jobData: JobData = {
       id: jobId,
       name,
       templateId,
       templateName,
+      templateDescription,
+      templateImageUrl,
       status: 'queued',
       progress: 0,
       variants,
@@ -71,8 +89,11 @@ export const createJob = async (
         name: name,
         template_id: templateId,
         template_name: templateName,
+        template_description: templateDescription,
+        template_image_url: templateImageUrl,
         status: 'queued',
         progress: 0,
+        variants,
         data_type: dataType === 'natural-language' ? 'script' : dataType,
         data_content: dataContent as Json,
         created_at: now,
@@ -124,6 +145,8 @@ export const processJob = async (jobId: string): Promise<void> => {
         jobId: job.id,
         templateId: job.template_id,
         templateName: job.template_name,
+        templateDescription: job.template_description,
+        templateImageUrl: job.template_image_url,
         numVariants: job.variants || 1, // Use the variants count from the job
         dataType: job.data_type,
         dataContent: job.data_content

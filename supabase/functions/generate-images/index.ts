@@ -10,15 +10,10 @@ type GenerateRequest = {
   templateId: string;
   templateName: string;
   templateDescription?: string;
+  templateImageUrl?: string; // Reference image URL to base variations on
   numVariants: number;
-  dataType: 'csv' | 'script' | 'natural-language';
+  dataType?: 'csv' | 'script' | 'natural-language';
   dataContent?: Record<string, string>[] | string;
-}
-
-interface Prompt {
-  id: string;
-  content: string;
-  dataVariables?: Record<string, string>;
 }
 
 interface GeneratedImage {
@@ -49,7 +44,7 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     
     // Get the request body
-    const { jobId, templateId, templateName, templateDescription, numVariants, dataType, dataContent } = await req.json() as GenerateRequest;
+    const { jobId, templateId, templateName, templateDescription, templateImageUrl: providedImageUrl, numVariants, dataType, dataContent } = await req.json() as GenerateRequest;
     
     if (!jobId || !templateId || !templateName || !numVariants) {
       return new Response(
@@ -59,19 +54,15 @@ Deno.serve(async (req) => {
     }
 
     console.log(`Processing job: ${jobId}, variants: ${numVariants}`);
-
-    // Detect if this is actually natural language content stored as 'script' type
-    const isNaturalLanguage = dataType === 'script' && 
-                            typeof dataContent === 'string' && 
-                            !dataContent.includes('function') && 
-                            !dataContent.includes('return') &&
-                            !dataContent.includes('{') &&
-                            !dataContent.includes('}');
+    
+    // After checking if the images bucket exists
+    const TEMPLATES_BUCKET = 'templates';
 
     // First, check if storage bucket exists, if not create it
     const { data: buckets } = await supabase.storage.listBuckets();
     const bucketExists = buckets?.some(bucket => bucket.name === STORAGE_BUCKET);
-    
+    const templatesBucketExists = buckets?.some(bucket => bucket.name === TEMPLATES_BUCKET);
+
     if (!bucketExists) {
       console.log(`Creating storage bucket: ${STORAGE_BUCKET}`);
       const { error: bucketError } = await supabase.storage.createBucket(STORAGE_BUCKET, {
@@ -108,235 +99,292 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Check if templates bucket exists
+    if (!templatesBucketExists) {
+      console.log(`Templates bucket not found. This could be why template images aren't accessible.`);
+      console.log(`Expected templates bucket name: ${TEMPLATES_BUCKET}`);
+      
+      // List all buckets for troubleshooting
+      console.log('Available buckets:');
+      buckets?.forEach(bucket => {
+        console.log(`- ${bucket.name}`);
+      });
+    }
+
+    // Fetch template image from database
+    let templateImageUrl = providedImageUrl;
+    console.log(`Template image URL: ${templateImageUrl}`);
+    
+    if (!templateImageUrl) {
+      console.log(`No image URL provided directly, looking up template: ${templateId}`);
+      
+      // First try to get the template from the templates table
+      const { data: templateData, error: templateError } = await supabase
+        .from('templates')
+        .select('image_url')
+        .eq('id', templateId)
+        .single();
+      
+      if (templateError) {
+        console.log(`Error fetching template: ${templateError.message}`);
+      } else if (templateData && templateData.image_url) {
+        templateImageUrl = templateData.image_url;
+        console.log(`Found template image URL in database: ${templateImageUrl}`);
+      } else {
+        // If not in database, try to generate URL from storage
+        try {
+          // Try with .png extension first
+          let { data: publicUrlData } = supabase.storage
+            .from(TEMPLATES_BUCKET)
+            .getPublicUrl(`${templateId}.png`);
+          
+          // If that doesn't work, try listing files to find the correct one
+          if (!publicUrlData || !publicUrlData.publicUrl) {
+            console.log('PNG not found, trying to list template files to find correct extension');
+            
+            // List files with the template ID prefix
+            const { data: fileList, error: listError } = await supabase.storage
+              .from(TEMPLATES_BUCKET)
+              .list('', {
+                search: templateId
+              });
+            
+            if (listError) {
+              console.error('Error listing template files:', listError);
+            } else if (fileList && fileList.length > 0) {
+              // Find the first file that matches the template ID
+              const templateFile = fileList.find(file => 
+                file.name.startsWith(templateId) || file.name === templateId
+              );
+              
+              if (templateFile) {
+                console.log(`Found template file: ${templateFile.name}`);
+                publicUrlData = supabase.storage
+                  .from(TEMPLATES_BUCKET)
+                  .getPublicUrl(templateFile.name);
+              }
+            } else {
+              console.log(`No files found for template ID: ${templateId}`);
+              
+              // Try common image extensions as a fallback
+              for (const ext of ['.jpg', '.jpeg', '.webp']) {
+                publicUrlData = supabase.storage
+                  .from(TEMPLATES_BUCKET)
+                  .getPublicUrl(`${templateId}${ext}`);
+                
+                // Break if we found a valid URL
+                if (publicUrlData && publicUrlData.publicUrl) {
+                  console.log(`Found template with ${ext} extension`);
+                  break;
+                }
+              }
+            }
+          }
+          
+          if (publicUrlData && publicUrlData.publicUrl) {
+            templateImageUrl = publicUrlData.publicUrl;
+            console.log(`Generated template image URL from storage: ${templateImageUrl}`);
+          } else {
+            console.log(`Could not find image for template ID: ${templateId}`);
+          }
+        } catch (storageError) {
+          console.error('Error generating template URL from storage:', storageError);
+        }
+      }
+    }
+    
+    if (!templateImageUrl) {
+      return new Response(
+        JSON.stringify({ error: 'Cannot find template image to use as reference' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Update job status - Started
     await updateJobStatus(supabase, jobId, 'processing', 10, 'Starting generation process');
     
-    // Step 1: Generate prompts using GPT-4o
-    await updateJobStatus(supabase, jobId, 'processing', 20, 'Generating prompts with GPT-4o');
-    const prompts = await generatePrompts(templateId, templateName, templateDescription, numVariants, dataType, dataContent, isNaturalLanguage);
+    // Generate variations of the template image using GPT-image-1
+    await updateJobStatus(supabase, jobId, 'processing', 50, 'Generating image variations with GPT-image-1');
     
-    console.log(`Generated ${prompts.length} prompts`);
+    // Generate all variations at once using the 'n' parameter
+    const generatedImages = await generateImageVariations(templateName, templateDescription || '', templateImageUrl, numVariants, dataType, dataContent);
     
-    // Save prompts to database
-    await supabase
-      .from('carousel_prompts')
-      .insert(prompts.map(prompt => ({
-        id: prompt.id,
-        job_id: jobId,
-        prompt_text: prompt.content,
-        data_variables: prompt.dataVariables || null,
-        created_at: new Date().toISOString()
-      })));
+    if (!generatedImages || generatedImages.length === 0) {
+      throw new Error('Failed to generate image variations');
+    }
     
-    // Update job with prompts data
+    console.log(`Generated ${generatedImages.length} image variations`);
+    
+    // Update job status
     await updateJobStatus(
       supabase, 
       jobId, 
       'processing', 
-      40, 
-      'Prompts generated, starting image generation',
-      undefined,
-      prompts
+      70, 
+      'Images generated, uploading to storage'
     );
     
-    // Step 2: Generate images from prompts
-    await updateJobStatus(supabase, jobId, 'processing', 50, 'Generating images with GPT-image-1');
-    
-    const images: GeneratedImage[] = [];
+    // Process and upload all generated images
+    const imageUrls: string[] = [];
     let completedImages = 0;
     
-    // Generate images in batches of 5 to avoid rate limits
-    const batchSize = 5;
-    const promptBatches: Prompt[][] = [];
-    
-    for (let i = 0; i < prompts.length; i += batchSize) {
-      promptBatches.push(prompts.slice(i, i + batchSize));
-    }
-    
-    for (const [batchIndex, promptBatch] of promptBatches.entries()) {
-      // Process each batch in parallel
-      const batchPromises = promptBatch.map(async (prompt) => {
+    for (const [index, imageResult] of generatedImages.entries()) {
+      try {
+        console.log(`Processing image ${index + 1} of ${generatedImages.length}`);
+        
+        let imageUrl = '';
+        let uploadResult: UploadResult | null = null;
+        
+        // Create a simpler unique filename
+        const filename = `${jobId}/${templateId}-${index}-${Date.now()}.png`;
+        
         try {
-          console.log(`Processing prompt: ${prompt.id}`);
-          
-          // Generate the image using OpenAI
-          const imageResult = await generateImageWithB64(prompt);
-          
-          if (!imageResult) {
-            console.error(`Failed to generate image for prompt ${prompt.id}`);
-            throw new Error(`Image generation failed for prompt ${prompt.id}`);
-          }
-          
-          let imageUrl = '';
-          let uploadResult: UploadResult | null = null;
-          
-          // Create a simpler unique filename
-          const filename = `${jobId}/${prompt.id}-${Date.now()}.png`;
-          
-          try {
-            if (imageResult.b64_json && imageResult.b64_json.length > 0) {
-              console.log(`Using base64 image data for prompt ${prompt.id}`);
-              
-              // Create blob directly as in the example
-              const imageBlob = new Blob([decode(imageResult.b64_json)], { type: 'image/png' });
-              const imageSize = imageBlob.size;
-              console.log(`Image blob size: ${(imageSize / (1024 * 1024)).toFixed(2)} MB`);
-              
-              // Upload with simpler parameters
-              const { data: uploadData, error: uploadError } = await supabase.storage
-                .from(STORAGE_BUCKET)
-                .upload(filename, imageBlob, {
-                  contentType: 'image/png',
-                  cacheControl: '3600',
-                  upsert: true
-                });
-              
-              if (uploadError) {
-                console.error('Error uploading image to storage:', JSON.stringify(uploadError));
-                throw uploadError;
-              }
-              
-              console.log(`Upload successful for prompt ${prompt.id}`);
-              uploadResult = { path: filename };
-            } else if (imageResult.url) {
-              console.log(`Fetching image from URL: ${imageResult.url}`);
-              
-              // Simple URL fetch
-              const imageResponse = await fetch(imageResult.url);
-              if (!imageResponse.ok) {
-                throw new Error(`Failed to fetch image from URL`);
-              }
-              
-              // Get as blob directly
-              const imageBlob = await imageResponse.blob();
-              console.log(`Image blob size: ${(imageBlob.size / (1024 * 1024)).toFixed(2)} MB`);
-              
-              // Upload with simpler parameters
-              const { data: uploadData, error: uploadError } = await supabase.storage
-                .from(STORAGE_BUCKET)
-                .upload(filename, imageBlob, {
-                  contentType: 'image/png',
-                  cacheControl: '3600',
-                  upsert: true
-                });
-              
-              if (uploadError) {
-                console.error('Error uploading image from URL:', JSON.stringify(uploadError));
-                // Use the direct URL if upload fails
-                imageUrl = imageResult.url;
-              } else {
-                console.log(`Successfully uploaded image from URL`);
-                uploadResult = { path: filename };
-              }
-            } else {
-              throw new Error(`No image data or URL available`);
-            }
+          if (imageResult.b64_json && imageResult.b64_json.length > 0) {
+            console.log(`Using base64 image data for image ${index + 1}`);
             
-            // Get the public URL for the uploaded image
-            if (uploadResult) {
-              const { data: publicUrlData } = supabase.storage
-                .from(STORAGE_BUCKET)
-                .getPublicUrl(uploadResult.path);
-              
-              if (!publicUrlData || !publicUrlData.publicUrl) {
-                throw new Error('Failed to get public URL');
-              }
-              
-              imageUrl = publicUrlData.publicUrl;
-              console.log(`Using storage URL: ${imageUrl}`);
-            } else if (!imageUrl) {
-              throw new Error(`Failed to get image URL`);
-            }
-          } catch (uploadError) {
-            console.error(`Error in upload process:`, uploadError);
+            // Create blob directly as in the example
+            const imageBlob = new Blob([decode(imageResult.b64_json)], { type: 'image/png' });
+            const imageSize = imageBlob.size;
+            console.log(`Image blob size: ${(imageSize / (1024 * 1024)).toFixed(2)} MB`);
             
-            // If we have direct URL, use it as fallback
-            if (imageResult.url && !imageUrl) {
-              console.log(`Using direct URL as fallback: ${imageResult.url}`);
-              imageUrl = imageResult.url;
-            } else {
+            // Upload with simpler parameters
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .upload(filename, imageBlob, {
+                contentType: 'image/png',
+                cacheControl: '3600',
+                upsert: true
+              });
+            
+            if (uploadError) {
+              console.error('Error uploading image to storage:', JSON.stringify(uploadError));
               throw uploadError;
             }
-          }
-          
-          // Create the image object
-          const image: GeneratedImage = {
-            b64_json: imageResult.b64_json,
-            url: imageUrl,
-            revised_prompt: imageResult.revised_prompt || prompt.content
-          };
-          
-          images.push(image);
-          
-          // Save image to database
-          try {
-            console.log(`Saving image record to database: ${prompt.id}`);
-            const { error: dbError } = await supabase
-              .from('carousel_images')
-              .insert({
-                id: prompt.id,
-                job_id: jobId,
-                prompt_id: prompt.id,
-                image_url: imageUrl,
-                width: 1024,
-                height: 1024,
-                b64_json: null, // Store null since we don't need to duplicate the data
-                revised_prompt: imageResult.revised_prompt || prompt.content,
-                created_at: new Date().toISOString()
-              });
-              
-            if (dbError) {
-              console.error(`Error saving image to database: ${JSON.stringify(dbError)}`);
-            } else {
-              console.log(`Image saved to database successfully`);
+            
+            console.log(`Upload successful for image ${index + 1}`);
+            uploadResult = { path: filename };
+          } else if (imageResult.url) {
+            console.log(`Fetching image from URL: ${imageResult.url}`);
+            
+            // Simple URL fetch
+            const imageResponse = await fetch(imageResult.url);
+            if (!imageResponse.ok) {
+              throw new Error(`Failed to fetch image from URL`);
             }
-          } catch (dbError) {
-            console.error(`Exception saving image to database: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+            
+            // Get as blob directly
+            const imageBlob = await imageResponse.blob();
+            console.log(`Image blob size: ${(imageBlob.size / (1024 * 1024)).toFixed(2)} MB`);
+            
+            // Upload with simpler parameters
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .upload(filename, imageBlob, {
+                contentType: 'image/png',
+                cacheControl: '3600',
+                upsert: true
+              });
+            
+            if (uploadError) {
+              console.error('Error uploading image from URL:', JSON.stringify(uploadError));
+              // Use the direct URL if upload fails
+              imageUrl = imageResult.url;
+            } else {
+              console.log(`Successfully uploaded image from URL`);
+              uploadResult = { path: filename };
+            }
+          } else {
+            throw new Error(`No image data or URL available`);
           }
           
-          completedImages++;
-          const progress = Math.floor(50 + (completedImages / prompts.length) * 50);
+          // Get the public URL for the uploaded image
+          if (uploadResult) {
+            const { data: publicUrlData } = supabase.storage
+              .from(STORAGE_BUCKET)
+              .getPublicUrl(uploadResult.path);
+            
+            if (!publicUrlData || !publicUrlData.publicUrl) {
+              throw new Error('Failed to get public URL');
+            }
+            
+            imageUrl = publicUrlData.publicUrl;
+            console.log(`Using storage URL: ${imageUrl}`);
+          } else if (!imageUrl) {
+            throw new Error(`Failed to get image URL`);
+          }
+        } catch (uploadError) {
+          console.error(`Error in upload process:`, uploadError);
           
-          // Update job progress but keep status as processing
-          await updateJobStatus(
-            supabase, 
-            jobId, 
-            'processing', 
-            progress, 
-            `Generated image ${completedImages} of ${prompts.length}`,
-            images.map(img => img.url || ''),
-            prompts
-          );
-        } catch (error) {
-          console.error(`Error generating image for prompt ${prompt.id}:`, error);
-          // Continue with other images even if one fails
+          // If we have direct URL, use it as fallback
+          if (imageResult.url && !imageUrl) {
+            console.log(`Using direct URL as fallback: ${imageResult.url}`);
+            imageUrl = imageResult.url;
+          } else {
+            throw uploadError;
+          }
         }
-      });
-      
-      await Promise.all(batchPromises);
-      
-      // Add a small delay between batches to avoid rate limits
-      if (batchIndex < promptBatches.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        imageUrls.push(imageUrl);
+        
+        // Save image to database
+        try {
+          console.log(`Saving image record to database: ${index + 1}`);
+          const imageId = `image-${templateId}-${index}`;
+          const { error: dbError } = await supabase
+            .from('carousel_images')
+            .insert({
+              id: imageId,
+              job_id: jobId,
+              prompt_id: imageId, // Not using prompts anymore, but keeping schema compatibility
+              image_url: imageUrl,
+              width: 1024,
+              height: 1024,
+              b64_json: null, // Store null since we don't need to duplicate the data
+              revised_prompt: imageResult.revised_prompt || `Variation ${index + 1} of ${templateName}`,
+              created_at: new Date().toISOString()
+            });
+            
+          if (dbError) {
+            console.error(`Error saving image to database: ${JSON.stringify(dbError)}`);
+          } else {
+            console.log(`Image saved to database successfully`);
+          }
+        } catch (dbError) {
+          console.error(`Exception saving image to database: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+        }
+        
+        completedImages++;
+        const progress = Math.floor(70 + (completedImages / generatedImages.length) * 30);
+        
+        // Update job progress but keep status as processing
+        await updateJobStatus(
+          supabase, 
+          jobId, 
+          'processing', 
+          progress, 
+          `Processed image ${completedImages} of ${generatedImages.length}`,
+          imageUrls
+        );
+      } catch (error) {
+        console.error(`Error processing image ${index + 1}:`, error);
+        // Continue with other images even if one fails
       }
     }
     
-    // Step 3: Finalize job
-    const imageUrls = images.map(img => img.url || '').filter(url => url !== '');
+    // Finalize job
     await updateJobStatus(
       supabase, 
       jobId, 
       'completed', 
       100, 
-      `Successfully generated ${images.length} images`,
-      imageUrls,
-      prompts
+      `Successfully generated ${imageUrls.length} images`,
+      imageUrls
     );
     
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: `Generated ${images.length} images for job ${jobId}`,
+        message: `Generated ${imageUrls.length} images for job ${jobId}`,
         imageUrls
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -352,26 +400,108 @@ Deno.serve(async (req) => {
   }
 });
 
+interface OpenAIImageData {
+  b64_json?: string;
+  url?: string;
+  revised_prompt?: string;
+}
+
 /**
- * Generate an image using OpenAI API
+ * Generate image variations using OpenAI API
  */
-async function generateImageWithB64(prompt: Prompt): Promise<GeneratedImage | null> {
+async function generateImageVariations(
+  templateName: string,
+  templateDescription: string,
+  referenceImageUrl: string,
+  numVariants: number,
+  dataType?: string,
+  dataContent?: Record<string, string>[] | string
+): Promise<GeneratedImage[]> {
   try {
-    // Use a simple request with just the essential parameters
-    console.log(`Generating image for prompt: "${prompt.content.substring(0, 50)}..."`);
+    if (!OPENAI_API_KEY) {
+      throw new Error('OpenAI API key is required for image generation');
+    }
     
-    const response = await fetch('https://api.openai.com/v1/images/generations', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    console.log(`Generating ${numVariants} image variations based on template image`);
+    
+    // Process data content based on type
+    let additionalInstructions = '';
+    
+    if (dataType === 'natural-language' && typeof dataContent === 'string') {
+      additionalInstructions = `
+        Additional user instructions: ${dataContent}
+      `;
+      console.log('Using natural language instructions for prompt');
+    } else if (dataType === 'script' && typeof dataContent === 'string') {
+      // Check if this is actually natural language content labeled as script
+      const isNaturalLanguage = !dataContent.includes('function') && 
+                              !dataContent.includes('return') &&
+                              !dataContent.includes('{') &&
+                              !dataContent.includes('}');
+      
+      if (isNaturalLanguage) {
+        additionalInstructions = `
+          Additional user instructions: ${dataContent}
+        `;
+        console.log('Using script content as natural language instructions');
+      } else {
+        additionalInstructions = `
+          Consider this logic when creating variations: ${dataContent}
+        `;
+        console.log('Using script content as logical guidelines');
+      }
+    } else if (dataType === 'csv' && Array.isArray(dataContent)) {
+      // For CSV data, we'll use the first entry's values as guidance
+      if (dataContent.length > 0) {
+        const firstEntry = dataContent[0];
+        const dataPoints = Object.entries(firstEntry)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join(', ');
+          
+        additionalInstructions = `
+          Include these data points in the image: ${dataPoints}
+        `;
+        console.log('Using CSV data points for prompt enhancement');
+      }
+    }
+    
+    // Create a prompt for TikTok carousel variation
+    const basePrompt = `Create a variation of this image that would be perfect for a TikTok carousel post. 
+                      The variation should maintain the essential style and content of the original 
+                      while being visually distinct. ${templateName ? `This is for "${templateName}".` : ''} 
+                      ${templateDescription ? templateDescription : ''}
+                      ${additionalInstructions}`;
+    
+    console.log("Downloading template image");
+    
+    // 1. Download the template image as an ArrayBuffer
+    const imgResp = await fetch(referenceImageUrl);
+    if (!imgResp.ok) {
+      throw new Error(`Could not download template image: ${imgResp.status} ${imgResp.statusText}`);
+    }
+    const imgBuffer = await imgResp.arrayBuffer();
+    console.log(`Downloaded template image: ${(imgBuffer.byteLength / 1024).toFixed(2)} KB`);
+    
+    // 2. Build multipart form
+    const form = new FormData();
+    form.append("model", "gpt-image-1");
+    form.append("prompt", basePrompt);
+    form.append("n", String(numVariants));
+    form.append("size", "1024x1024");
+    form.append(
+      "image",
+      new Blob([imgBuffer], { type: "image/png" }), 
+      "template.png"
+    );
+    
+    // 3. Call the edits endpoint
+    console.log("Sending request to OpenAI Image Edits API");
+    const response = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: { 
         Authorization: `Bearer ${OPENAI_API_KEY}`
       },
-      body: JSON.stringify({
-        model: 'gpt-image-1',
-        prompt: prompt.content,
-        n: 1,
-        size: '1024x1024', // Standard size for better file size
-      })
+      body: form
     });
 
     if (!response.ok) {
@@ -385,173 +515,18 @@ async function generateImageWithB64(prompt: Prompt): Promise<GeneratedImage | nu
     
     if (!responseJson.data || responseJson.data.length === 0) {
       console.error('No image data returned from OpenAI');
-      return null;
+      return [];
     }
 
-    // Extract the image data - focus on b64_json
-    const imageData = responseJson.data[0];
-    
-    return {
+    // Extract the image data
+    return responseJson.data.map((imageData: OpenAIImageData) => ({
       b64_json: imageData.b64_json || null,
       url: imageData.url || null,
-      revised_prompt: imageData.revised_prompt || prompt.content
-    };
+      revised_prompt: imageData.revised_prompt || basePrompt
+    }));
   } catch (error) {
-    console.error('Error generating image:', error);
-    return null;
-  }
-}
-
-/**
- * Generate prompts using GPT-4o
- */
-async function generatePrompts(
-  templateId: string,
-  templateName: string,
-  templateDescription?: string,
-  numVariants: number = 1,
-  dataType?: string,
-  dataContent?: Record<string, string>[] | string,
-  isNaturalLanguage?: boolean
-): Promise<Prompt[]> {
-  try {
-    if (!OPENAI_API_KEY) {
-      console.error('No OpenAI API key available for prompt generation');
-      throw new Error('OpenAI API key is required for prompt generation');
-    }
-    
-    console.log('Generating prompts with OpenAI API');
-
-    let content: string;
-    
-    // Handle based on data type
-    if (isNaturalLanguage || dataType === 'natural-language') {
-      // If it's natural language, use it directly as part of the prompt
-      content = `
-        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
-        
-        User's instructions:
-        ${dataContent}
-        
-        For each image, provide a comprehensive prompt that covers:
-        - Art Direction: Overall style and visual approach
-        - Composition: Layout and arrangement of elements
-        - Colors: Color palette and tone
-        - Mood: Emotional feel of the image
-        - Lighting: How the image should be lit
-        - Text Elements: Any text to include in the image
-        
-        Format each prompt as: "**Art Direction:** [details]" etc.
-        
-        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
-      `;
-    } else if (dataType === 'script' && typeof dataContent === 'string') {
-      // If it's a script, extract variables from it if possible
-      content = `
-        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
-        
-        Use this JavaScript code to understand what variables/data to include:
-        \`\`\`javascript
-        ${dataContent}
-        \`\`\`
-        
-        For each image, provide a comprehensive prompt that covers:
-        - Art Direction: Overall style and visual approach
-        - Composition: Layout and arrangement of elements
-        - Colors: Color palette and tone
-        - Mood: Emotional feel of the image
-        - Lighting: How the image should be lit
-        - Text Elements: Any text to include in the image
-        
-        Format each prompt as: "**Art Direction:** [details]" etc.
-        
-        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
-      `;
-    } else if (dataType === 'csv' && Array.isArray(dataContent)) {
-      // If it's CSV data, add it to the prompt
-      content = `
-        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
-        
-        Use these data variables for each prompt:
-        ${JSON.stringify(dataContent)}
-        
-        For each image, provide a comprehensive prompt that covers:
-        - Art Direction: Overall style and visual approach
-        - Composition: Layout and arrangement of elements
-        - Colors: Color palette and tone
-        - Mood: Emotional feel of the image
-        - Lighting: How the image should be lit
-        - Text Elements: Any text to include in the image
-        
-        Format each prompt as: "**Art Direction:** [details]" etc.
-        
-        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
-      `;
-    } else {
-      // Default case
-      content = `
-        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
-        
-        For each image, provide a comprehensive prompt that covers:
-        - Art Direction: Overall style and visual approach
-        - Composition: Layout and arrangement of elements
-        - Colors: Color palette and tone
-        - Mood: Emotional feel of the image
-        - Lighting: How the image should be lit
-        - Text Elements: Any text to include in the image
-        
-        Format each prompt as: "**Art Direction:** [details]" etc.
-        
-        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
-      `;
-    }
-
-    // Call the OpenAI API
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: 'You are an expert at creating descriptive prompts for image generation. Your task is to create detailed prompts that will be used to generate images with GPT-image-1.' },
-          { role: 'user', content }
-        ],
-        temperature: 0.7
-      })
-    });
-
-    const result = await response.json();
-    
-    if (!response.ok) {
-      throw new Error(`OpenAI API error: ${result.error?.message || 'Unknown error'}`);
-    }
-    
-    // Parse the response to extract the prompts
-    const generatedText = result.choices[0].message.content;
-    
-    // Extract prompts - the format will depend on how GPT-4o formats its response
-    // We expect each prompt to be formatted as "**Art Direction:** [details]" etc.
-    // Split the text into separate prompts
-    const promptMatches = generatedText.split(/\n{2,}/).filter(Boolean);
-    
-    if (promptMatches.length === 0) {
-      throw new Error('No valid prompts were generated');
-    }
-
-    // Create the array of prompts
-    return promptMatches.slice(0, numVariants).map((promptText, index) => {
-      return {
-        id: `prompt-${templateId}-${index}`,
-        content: promptText.trim(),
-        dataVariables: Array.isArray(dataContent) && index < dataContent.length ? dataContent[index] : undefined
-      };
-    });
-  } catch (error) {
-    console.error('Error generating prompts:', error);
-    throw error;
+    console.error('Error generating image variations:', error);
+    return [];
   }
 }
 
@@ -564,8 +539,7 @@ async function updateJobStatus(
   status: 'queued' | 'processing' | 'completed' | 'failed',
   progress: number,
   message?: string,
-  imageUrls?: string[],
-  prompts?: Prompt[]
+  imageUrls?: string[]
 ) {
   try {
     const { error } = await supabase
@@ -575,7 +549,6 @@ async function updateJobStatus(
         progress,
         message,
         image_urls: imageUrls,
-        prompts: prompts ? JSON.stringify(prompts) : undefined,
         updated_at: new Date().toISOString()
       })
       .eq('id', jobId);
