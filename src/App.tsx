@@ -6,24 +6,37 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/supabase/AuthProvider";
-import { AppLayout } from "./components/AppLayout";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+      retry: false,
+    },
+  },
+});
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
-      <AuthProvider>
+      <BrowserRouter>
         <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <AppLayout />
-          </BrowserRouter>
+          <AuthProvider>
+            <Toaster />
+            <Sonner />
+            <Toaster />
+            <AppRoutes />
+          </AuthProvider>
         </TooltipProvider>
-      </AuthProvider>
+      </BrowserRouter>
     </ThemeProvider>
   </QueryClientProvider>
 );
+
+import { AppLayout } from "./components/AppLayout";
+
+function AppRoutes() {
+  return <AppLayout />;
+}
 
 export default App;

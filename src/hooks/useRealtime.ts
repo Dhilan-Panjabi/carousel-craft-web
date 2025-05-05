@@ -1,7 +1,6 @@
 
 import { useEffect, useState } from 'react';
 import supabase from '@/supabase/supabaseClient';
-import { PostgrestQueryBuilder } from '@supabase/supabase-js';
 
 export function useRealtime<T>(
   table: string,
@@ -23,7 +22,7 @@ export function useRealtime<T>(
       try {
         let query = supabase
           .from(table)
-          .select('*') as PostgrestQueryBuilder<any, any, any, T>;
+          .select('*');
         
         if (filter?.column && filter?.value !== undefined) {
           query = query.eq(filter.column, filter.value);

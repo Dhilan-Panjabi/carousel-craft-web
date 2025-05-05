@@ -1,122 +1,295 @@
 
-import { Button } from "@/components/ui/button";
+import { useState, useEffect } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+  CardFooter,
+} from '@/components/ui/card';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Loader2, UserRound, Mail, Key } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
+import { useAuth } from '@/supabase/AuthProvider';
+import { toast } from 'sonner';
+import supabase from '@/supabase/supabaseClient';
+
+interface Profile {
+  id: string;
+  username: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
+}
+
+const formSchema = z.object({
+  full_name: z.string().min(2, 'Full name must be at least 2 characters.').max(100),
+  username: z.string().min(3, 'Username must be at least 3 characters.').max(50).optional(),
+});
 
 export default function AccountPage() {
-  const { toast } = useToast();
-  
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    toast({
-      title: "Settings updated",
-      description: "Your account settings have been saved"
-    });
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [updateLoading, setUpdateLoading] = useState(false);
+
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      full_name: '',
+      username: '',
+    },
+  });
+
+  useEffect(() => {
+    async function fetchProfile() {
+      try {
+        if (!user) return;
+        
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
+
+        if (error) {
+          console.error('Error fetching profile:', error);
+          toast.error('Failed to load profile');
+          return;
+        }
+
+        setProfile(data);
+
+        // Update form values
+        form.reset({
+          full_name: data.full_name || '',
+          username: data.username || '',
+        });
+      } catch (error) {
+        console.error('Error in fetchProfile:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchProfile();
+  }, [user, form]);
+
+  async function onSubmit(values: z.infer<typeof formSchema>) {
+    try {
+      setUpdateLoading(true);
+
+      if (!user) {
+        toast.error('You must be logged in to update your profile');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: values.full_name,
+          username: values.username,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', user.id);
+
+      if (error) {
+        console.error('Error updating profile:', error);
+        toast.error('Failed to update profile');
+        return;
+      }
+
+      // Update profile state
+      setProfile(prev => 
+        prev ? { ...prev, full_name: values.full_name, username: values.username || null } : null
+      );
+
+      toast.success('Profile updated successfully');
+    } catch (error) {
+      console.error('Error in onSubmit:', error);
+      toast.error('An unexpected error occurred');
+    } finally {
+      setUpdateLoading(false);
+    }
+  }
+
+  const getInitials = () => {
+    if (!profile?.full_name) return 'U';
+    return profile.full_name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase();
   };
 
+  if (isLoading) {
+    return (
+      <div className="container py-10 flex justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
-    <div className="container py-8 max-w-3xl">
-      <h1 className="text-3xl font-bold mb-6">Account Settings</h1>
-      
-      <div className="space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Profile Information</CardTitle>
-            <CardDescription>
-              Update your account details
-            </CardDescription>
-          </CardHeader>
-          <form onSubmit={handleSubmit}>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input id="name" defaultValue="John Doe" />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" defaultValue="john@example.com" disabled />
-                <p className="text-xs text-muted-foreground">
-                  To change your email, please contact support
-                </p>
+    <div className="container py-10">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold tracking-tight">Account Settings</h1>
+        <p className="text-muted-foreground">
+          Manage your account details and preferences
+        </p>
+      </div>
+
+      <div className="grid gap-8 md:grid-cols-3">
+        <div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Your Profile</CardTitle>
+              <CardDescription>
+                Personal information and preferences
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col items-center space-y-4 text-center">
+              <Avatar className="h-24 w-24">
+                {profile?.avatar_url ? (
+                  <AvatarImage src={profile.avatar_url} alt={profile?.full_name || 'User'} />
+                ) : (
+                  <AvatarFallback className="text-2xl">{getInitials()}</AvatarFallback>
+                )}
+              </Avatar>
+              <div>
+                <h3 className="text-xl font-semibold">
+                  {profile?.full_name || 'User'}
+                </h3>
+                <p className="text-sm text-muted-foreground">{user?.email}</p>
               </div>
             </CardContent>
-            <CardFooter className="flex justify-end">
-              <Button type="submit">Save Changes</Button>
-            </CardFooter>
-          </form>
-        </Card>
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>API Keys</CardTitle>
-            <CardDescription>
-              Manage your API credentials for programmatic access
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="apiKey">API Key</Label>
-              <div className="flex gap-2">
-                <Input 
-                  id="apiKey" 
-                  type="password" 
-                  value="sk_live_****************************************"
-                  readOnly 
-                />
-                <Button variant="outline" onClick={() => {
-                  toast({
-                    title: "API key copied",
-                    description: "Your API key has been copied to clipboard"
-                  });
-                }}>
-                  Copy
+          </Card>
+        </div>
+
+        <div className="md:col-span-2">
+          <Card>
+            <CardHeader>
+              <CardTitle>Profile Information</CardTitle>
+              <CardDescription>
+                Update your account details here
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                  <FormField
+                    control={form.control}
+                    name="full_name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Full Name</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <UserRound className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input className="pl-9" placeholder="Your full name" {...field} />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="username"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Username</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-muted-foreground">@</span>
+                            <Input className="pl-9" placeholder="username" {...field} />
+                          </div>
+                        </FormControl>
+                        <FormDescription>
+                          This is your public display name.
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <div>
+                    <FormLabel className="text-base">Email</FormLabel>
+                    <div className="relative mt-2">
+                      <Mail className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input 
+                        disabled 
+                        value={user?.email || ''} 
+                        className="pl-9 bg-muted" 
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Email cannot be changed
+                    </p>
+                  </div>
+
+                  <Button type="submit" disabled={updateLoading}>
+                    {updateLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Save Changes
+                  </Button>
+                </form>
+              </Form>
+            </CardContent>
+          </Card>
+
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle>Security</CardTitle>
+              <CardDescription>
+                Manage your account security settings
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div>
+                <h3 className="text-base font-medium mb-2 flex items-center">
+                  <Key className="mr-2 h-4 w-4" />
+                  Password
+                </h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Reset your password to keep your account secure
+                </p>
+                <Button 
+                  variant="outline" 
+                  onClick={() => window.location.href = '/auth?mode=reset-password'}
+                >
+                  Change Password
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                This key provides full access to your account. Keep it secure!
-              </p>
-            </div>
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="destructive">Revoke Key</Button>
-            <Button variant="outline">Generate New Key</Button>
-          </CardFooter>
-        </Card>
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>Danger Zone</CardTitle>
-            <CardDescription>
-              Irreversible actions for your account
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Once you delete your account, there is no going back. Please be certain.
-            </p>
-          </CardContent>
-          <CardFooter>
-            <Button variant="destructive" onClick={() => {
-              toast({
-                title: "Account deletion",
-                description: "Please contact support to delete your account",
-                variant: "destructive"
-              });
-            }}>
-              Delete Account
-            </Button>
-          </CardFooter>
-        </Card>
+
+              <Separator className="my-6" />
+
+              <div>
+                <h3 className="text-base font-medium mb-2 text-destructive">Danger Zone</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Once you delete your account, there is no going back. Please be certain.
+                </p>
+                <Button variant="destructive">
+                  Delete Account
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

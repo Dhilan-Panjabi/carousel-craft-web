@@ -1,30 +1,23 @@
 
-import { useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { useNavigate } from "react-router-dom";
 
-const NotFound = () => {
-  const location = useLocation();
+export default function NotFound() {
   const navigate = useNavigate();
 
-  useEffect(() => {
-    console.error(
-      "404 Error: User attempted to access non-existent route:",
-      location.pathname
-    );
-  }, [location.pathname]);
-
   return (
-    <div className="container flex flex-col items-center justify-center min-h-[80vh] py-20 text-center">
-      <h1 className="text-7xl font-extrabold mb-4 brand-gradient">404</h1>
-      <p className="text-xl text-muted-foreground mb-8">
-        Oops! The page you're looking for doesn't exist.
+    <div className="flex h-screen flex-col items-center justify-center px-6 text-center">
+      <h1 className="text-7xl font-bold text-primary">404</h1>
+      <h2 className="mt-4 text-3xl font-bold tracking-tight">Page not found</h2>
+      <p className="mt-2 text-lg text-muted-foreground">
+        Sorry, we couldn't find the page you're looking for.
       </p>
-      <Button onClick={() => navigate("/")}>
-        Return to Dashboard
-      </Button>
+      <div className="mt-6 flex flex-col space-y-2 sm:flex-row sm:space-x-2 sm:space-y-0">
+        <Button onClick={() => navigate(-1)}>Go Back</Button>
+        <Button variant="outline" onClick={() => navigate("/")}>
+          Go Home
+        </Button>
+      </div>
     </div>
   );
-};
-
-export default NotFound;
+}
