@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -8,7 +8,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Trash, Download, Share2 } from "lucide-react";
+import { Trash, Download, Share2, Sparkles } from "lucide-react";
 import {
   Carousel,
   CarouselContent,
@@ -21,6 +21,9 @@ import driveService, { CarouselImageExport } from "@/integrations/google/driveSe
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { AdAssetsEditor } from "./AdAssetsEditor";
+import { generateAdAssets, AdAsset } from "@/integrations/ai/adAssetsService";
 
 export interface CarouselImage {
   id: string;
@@ -44,6 +47,17 @@ export function ImageCarouselPreview({
   const [activeIndex, setActiveIndex] = useState(0);
   const [carouselName, setCarouselName] = useState("My TikTok Carousel");
   const [isExporting, setIsExporting] = useState(false);
+  const [showAdAssets, setShowAdAssets] = useState(false);
+  const [isGeneratingAssets, setIsGeneratingAssets] = useState(false);
+  const [adAssets, setAdAssets] = useState<{
+    hooks: AdAsset[];
+    headlines: AdAsset[];
+    scripts: AdAsset[];
+  }>({
+    hooks: [],
+    headlines: [],
+    scripts: []
+  });
 
   const handleCarouselChange = (api: CarouselApi) => {
     if (api) {
@@ -97,9 +111,45 @@ export function ImageCarouselPreview({
     }
   };
 
+  const handleGenerateAdAssets = async () => {
+    if (!images.length) {
+      toast.error("No images to generate assets for");
+      return;
+    }
+
+    try {
+      setIsGeneratingAssets(true);
+      setShowAdAssets(true);
+      
+      // Generate a unique ID for this carousel
+      const carouselId = `carousel-${Date.now()}`;
+      
+      // Extract image URLs for the ad asset generation
+      const imageUrls = images.map(img => img.url);
+      
+      // Call the ad assets generation service
+      const generatedAssets = await generateAdAssets({
+        carouselId,
+        carouselName,
+        imageUrls,
+        numVariations: 3 // Generate 3 variations of each asset type
+      });
+      
+      setAdAssets(generatedAssets);
+      
+    } catch (error) {
+      console.error("Error generating ad assets:", error);
+      toast.error("Failed to generate ad assets", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+    } finally {
+      setIsGeneratingAssets(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md md:max-w-lg lg:max-w-2xl xl:max-w-4xl">
+      <DialogContent className="sm:max-w-md md:max-w-lg lg:max-w-2xl xl:max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>TikTok Carousel Preview</DialogTitle>
         </DialogHeader>
@@ -168,15 +218,41 @@ export function ImageCarouselPreview({
               />
             </div>
             
-            <Button 
-              className="w-full"
-              onClick={handleExportToDrive}
-              disabled={isExporting || !images.length}
-            >
-              <Share2 className="h-4 w-4 mr-2" />
-              {isExporting ? "Exporting to Drive..." : "Export to Google Drive"}
-            </Button>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Button 
+                className="flex-1"
+                onClick={handleExportToDrive}
+                disabled={isExporting || !images.length}
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                {isExporting ? "Exporting to Drive..." : "Export to Google Drive"}
+              </Button>
+              
+              <Button 
+                className="flex-1"
+                variant="secondary"
+                onClick={handleGenerateAdAssets}
+                disabled={isGeneratingAssets || !images.length}
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                {isGeneratingAssets ? "Generating..." : "Generate Ad Assets"}
+              </Button>
+            </div>
           </div>
+        )}
+        
+        {showAdAssets && images.length > 0 && (
+          <>
+            <Separator className="my-6" />
+            
+            <AdAssetsEditor 
+              hooks={adAssets.hooks}
+              headlines={adAssets.headlines}
+              scripts={adAssets.scripts}
+              isLoading={isGeneratingAssets}
+              onRegenerateClick={handleGenerateAdAssets}
+            />
+          </>
         )}
 
         <DialogFooter className="sm:justify-between">
