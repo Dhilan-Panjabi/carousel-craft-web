@@ -20,10 +20,16 @@ export function useJobUpdates({ jobId }: UseJobUpdatesProps = {}): UseJobUpdates
   useEffect(() => {
     if (jobId) {
       // Initial load
-      const loadJob = () => {
-        const jobData = getJob(jobId);
-        setJob(jobData);
-        setIsLoading(false);
+      const loadJob = async () => {
+        setIsLoading(true);
+        try {
+          const jobData = await getJob(jobId);
+          setJob(jobData);
+        } catch (error) {
+          console.error("Error loading job:", error);
+        } finally {
+          setIsLoading(false);
+        }
       };
       
       loadJob();

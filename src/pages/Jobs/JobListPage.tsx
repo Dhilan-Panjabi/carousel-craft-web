@@ -69,9 +69,16 @@ export default function JobListPage() {
     };
   }, [location.search]);
   
-  const loadJobs = () => {
-    const storedJobs = getAllJobs();
-    setJobs(storedJobs);
+  const loadJobs = async () => {
+    setIsLoading(true);
+    try {
+      const storedJobs = await getAllJobs();
+      setJobs(storedJobs);
+    } catch (error) {
+      console.error("Error loading jobs:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   const handleJobUpdate = () => {

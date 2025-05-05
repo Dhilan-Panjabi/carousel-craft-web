@@ -258,38 +258,176 @@ const startPollingForJobUpdates = (jobId: string): void => {
 /**
  * Get a job by ID
  */
-export const getJob = (jobId: string): JobData | null => {
+export const getJob = async (jobId: string): Promise<JobData | null> => {
   try {
-    const jobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
-    return jobs.find(job => job.id === jobId) || null;
+    // Fetch job from Supabase
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+    
+    if (error) {
+      console.error("Error fetching job from Supabase:", error);
+      // Fall back to localStorage if there's an error
+      const jobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+      return jobs.find(job => job.id === jobId) || null;
+    }
+    
+    if (!data) {
+      return null;
+    }
+    
+    // Handle data content types
+    let dataContent: Record<string, unknown>[] | string = '';
+    if (typeof data.data_content === 'string') {
+      dataContent = data.data_content;
+    } else if (Array.isArray(data.data_content)) {
+      dataContent = data.data_content as Record<string, unknown>[];
+    }
+    
+    // Convert Supabase job to JobData format
+    const job: JobData = {
+      id: data.id,
+      name: data.name,
+      templateId: data.template_id,
+      templateName: data.template_name,
+      templateDescription: data.template_description || '',
+      templateImageUrl: data.template_image_url || '',
+      status: data.status as JobData['status'],
+      progress: data.progress,
+      variants: 1, // Default if variants not provided
+      dataType: (data.data_type || 'script') as JobData['dataType'],
+      dataContent,
+      createdAt: data.created_at || new Date().toISOString(),
+      updatedAt: data.updated_at || new Date().toISOString(),
+      imageUrls: data.image_urls || [],
+      message: data.message || undefined,
+      prompts: data.prompts as JobData['prompts'] || undefined
+    };
+    
+    return job;
   } catch (error) {
     console.error("Error getting job:", error);
-    return null;
+    // Fall back to localStorage if there's an error
+    const jobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+    return jobs.find(job => job.id === jobId) || null;
   }
 };
 
 /**
  * Get all jobs
  */
-export const getAllJobs = (): JobData[] => {
+export const getAllJobs = async (): Promise<JobData[]> => {
   try {
-    return JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+    // Fetch jobs from Supabase
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error("Error fetching jobs from Supabase:", error);
+      // Fall back to localStorage if there's an error
+      return JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
+    }
+    
+    // Convert Supabase jobs to JobData format
+    const jobs: JobData[] = data.map(job => {
+      // Handle data content types
+      let dataContent: Record<string, unknown>[] | string = '';
+      if (typeof job.data_content === 'string') {
+        dataContent = job.data_content;
+      } else if (Array.isArray(job.data_content)) {
+        dataContent = job.data_content as Record<string, unknown>[];
+      }
+      
+      return {
+        id: job.id,
+        name: job.name,
+        templateId: job.template_id,
+        templateName: job.template_name,
+        templateDescription: job.template_description || '',
+        templateImageUrl: job.template_image_url || '',
+        status: job.status as JobData['status'],
+        progress: job.progress,
+        variants: 1, // Default if variants not provided
+        dataType: (job.data_type || 'script') as JobData['dataType'],
+        dataContent,
+        createdAt: job.created_at || new Date().toISOString(),
+        updatedAt: job.updated_at || new Date().toISOString(),
+        imageUrls: job.image_urls || [],
+        message: job.message || undefined,
+        prompts: job.prompts as JobData['prompts'] || undefined
+      };
+    });
+    
+    // Update localStorage with the latest jobs
+    localStorage.setItem('carousel_jobs', JSON.stringify(jobs));
+    
+    return jobs;
   } catch (error) {
     console.error("Error getting all jobs:", error);
-    return [];
+    // Fall back to localStorage if there's an error
+    return JSON.parse(localStorage.getItem('carousel_jobs') || '[]');
   }
 };
 
 /**
  * Get jobs by template ID
  */
-export const getJobsByTemplateId = (templateId: string): JobData[] => {
+export const getJobsByTemplateId = async (templateId: string): Promise<JobData[]> => {
   try {
-    const allJobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]') as JobData[];
-    return allJobs.filter(job => job.templateId === templateId);
+    // Fetch jobs from Supabase filtered by template ID
+    const { data, error } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('template_id', templateId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error("Error fetching jobs by template ID from Supabase:", error);
+      // Fall back to localStorage if there's an error
+      const allJobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]') as JobData[];
+      return allJobs.filter(job => job.templateId === templateId);
+    }
+    
+    // Convert Supabase jobs to JobData format
+    const jobs: JobData[] = data.map(job => {
+      // Handle data content types
+      let dataContent: Record<string, unknown>[] | string = '';
+      if (typeof job.data_content === 'string') {
+        dataContent = job.data_content;
+      } else if (Array.isArray(job.data_content)) {
+        dataContent = job.data_content as Record<string, unknown>[];
+      }
+      
+      return {
+        id: job.id,
+        name: job.name,
+        templateId: job.template_id,
+        templateName: job.template_name,
+        templateDescription: job.template_description || '',
+        templateImageUrl: job.template_image_url || '',
+        status: job.status as JobData['status'],
+        progress: job.progress,
+        variants: 1, // Default if variants not provided
+        dataType: (job.data_type || 'script') as JobData['dataType'],
+        dataContent,
+        createdAt: job.created_at || new Date().toISOString(),
+        updatedAt: job.updated_at || new Date().toISOString(),
+        imageUrls: job.image_urls || [],
+        message: job.message || undefined,
+        prompts: job.prompts as JobData['prompts'] || undefined
+      };
+    });
+    
+    return jobs;
   } catch (error) {
     console.error("Error getting jobs by template ID:", error);
-    return [];
+    // Fall back to localStorage if there's an error
+    const allJobs = JSON.parse(localStorage.getItem('carousel_jobs') || '[]') as JobData[];
+    return allJobs.filter(job => job.templateId === templateId);
   }
 };
 

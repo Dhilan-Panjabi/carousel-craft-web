@@ -125,9 +125,13 @@ export default function TemplateManagerPage() {
       // Load jobs for each template
       const jobsByTemplate: Record<string, JobData[]> = {};
       for (const template of templateData) {
-        const jobs = getJobsByTemplateId(template.id);
-        if (jobs.length > 0) {
-          jobsByTemplate[template.id] = jobs;
+        try {
+          const jobs = await getJobsByTemplateId(template.id);
+          if (jobs.length > 0) {
+            jobsByTemplate[template.id] = jobs;
+          }
+        } catch (error) {
+          console.error(`Error loading jobs for template ${template.id}:`, error);
         }
       }
       setTemplateJobs(jobsByTemplate);

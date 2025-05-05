@@ -61,6 +61,7 @@ export default function LibraryPage() {
   const [showCarouselSelector, setShowCarouselSelector] = useState(false);
   const [showCarouselPreview, setShowCarouselPreview] = useState(false);
   const [carouselImages, setCarouselImages] = useState<CarouselImage[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   
   useEffect(() => {
     // Parse query parameters
@@ -83,45 +84,53 @@ export default function LibraryPage() {
     loadImages(templateId);
   };
   
-  const loadImages = (filterTemplateId: string | null = null) => {
-    const jobs = getAllJobs();
-    
-    // Filter jobs by template ID if specified
-    const filteredJobs = filterTemplateId 
-      ? jobs.filter(job => job.templateId === filterTemplateId) 
-      : jobs;
-    
-    const extractedImages: LibraryImage[] = [];
-    
-    filteredJobs.forEach(job => {
-      // Skip jobs that aren't completed if filter is on
-      if (showOnlyCompleted && job.status !== 'completed') return;
+  const loadImages = async (filterTemplateId: string | null = null) => {
+    setIsLoading(true);
+    try {
+      // Get jobs from Supabase via the updated getAllJobs function
+      const jobs = await getAllJobs();
       
-      // Extract images from each job
-      if (job.imageUrls && job.imageUrls.length > 0) {
-        job.imageUrls.forEach((url, index) => {
-          const promptId = job.prompts && job.prompts[index] ? job.prompts[index].id : undefined;
-          const prompt = job.prompts && job.prompts[index] ? job.prompts[index].prompt : undefined;
-          
-          extractedImages.push({
-            id: `${job.id}-${index}`,
-            url,
-            jobId: job.id,
-            jobName: job.name,
-            template: job.templateName,
-            templateId: job.templateId,
-            createdAt: job.updatedAt,
-            promptId,
-            prompt
+      // Filter jobs by template ID if specified
+      const filteredJobs = filterTemplateId 
+        ? jobs.filter(job => job.templateId === filterTemplateId) 
+        : jobs;
+      
+      const extractedImages: LibraryImage[] = [];
+      
+      filteredJobs.forEach(job => {
+        // Skip jobs that aren't completed if filter is on
+        if (showOnlyCompleted && job.status !== 'completed') return;
+        
+        // Extract images from each job
+        if (job.imageUrls && job.imageUrls.length > 0) {
+          job.imageUrls.forEach((url, index) => {
+            const promptId = job.prompts && job.prompts[index] ? job.prompts[index].id : undefined;
+            const prompt = job.prompts && job.prompts[index] ? job.prompts[index].prompt : undefined;
+            
+            extractedImages.push({
+              id: `${job.id}-${index}`,
+              url,
+              jobId: job.id,
+              jobName: job.name,
+              template: job.templateName,
+              templateId: job.templateId,
+              createdAt: job.updatedAt,
+              promptId,
+              prompt
+            });
           });
-        });
-      }
-    });
-    
-    // Sort by creation date (newest first)
-    extractedImages.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    
-    setImages(extractedImages);
+        }
+      });
+      
+      // Sort by creation date (newest first)
+      extractedImages.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      setImages(extractedImages);
+    } catch (error) {
+      console.error("Error loading images:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   const handleImageClick = (image: LibraryImage) => {
