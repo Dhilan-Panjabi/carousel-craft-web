@@ -90,7 +90,7 @@ export default function DriveCallbackPage() {
         
         // Redirect after short delay
         setTimeout(() => {
-          navigate(finalRedirect);
+          navigate("/templates");
         }, 1500);
         
       } catch (error) {
