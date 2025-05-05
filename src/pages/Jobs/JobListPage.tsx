@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import {
   Table,
@@ -220,8 +219,7 @@ export default function JobListPage() {
                     <div className="flex items-center gap-2">
                       <Progress 
                         value={job.progress} 
-                        className="h-2"
-                        indicatorClassName={getStatusColor(job.status)}
+                        className={`h-2 ${getStatusColor(job.status)}`}
                       />
                       <span className="text-xs text-muted-foreground w-10">
                         {job.progress}%
