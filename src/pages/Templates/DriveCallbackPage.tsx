@@ -62,35 +62,26 @@ export default function DriveCallbackPage() {
           }
         }
         
-        // Get redirect URL or default to templates page
-        const redirectUrl = localStorage.getItem('google_drive_auth_redirect') || '/library';
-        console.log("Original redirect URL:", redirectUrl);
-        
-        // If the redirect URL contains "/library", make sure we go back to the library page
-        const finalRedirect = redirectUrl.includes('/library') ? '/library' : redirectUrl;
-        
-        // If URL contains localhost but we're on a different domain, fix the redirect
-        if (finalRedirect.includes('localhost') && !window.location.origin.includes('localhost')) {
-          const fixedRedirect = finalRedirect.replace(/https?:\/\/localhost:[0-9]+/g, window.location.origin);
-          console.log("Fixed localhost redirect:", fixedRedirect);
-          navigate(fixedRedirect.replace(window.location.origin, ''));
-          return;
-        }
-        
-        console.log("Final redirect URL:", finalRedirect);
-        
+        // Clear any pending redirects
         localStorage.removeItem('google_drive_auth_redirect');
         
-        // Check if we need to show export success message
-        if (pendingExportJson) {
-          toast.success("You'll be redirected back to continue your work", {
-            description: "Your Google Drive is now connected"
-          });
-        }
+        toast.success("Google Drive Connected", {
+          description: "Your Google Drive account has been successfully connected"
+        });
         
-        // Redirect after short delay
+        // Set a flag in localStorage to indicate we're coming from the Drive auth flow
+        // This will help prevent potential auth redirect loops
+        localStorage.setItem('drive_auth_completed', 'true');
+        
+        // Redirect directly to templates page after a short delay
         setTimeout(() => {
-          navigate("/templates");
+          // Force navigate to templates with a state parameter to indicate successful auth
+          navigate("/templates", { 
+            state: { 
+              fromDriveAuth: true,
+              timestamp: Date.now() // Add timestamp to ensure state is always unique
+            } 
+          });
         }, 1500);
         
       } catch (error) {
@@ -103,13 +94,13 @@ export default function DriveCallbackPage() {
         
         // Redirect after error
         setTimeout(() => {
-          navigate('/templates');
+          navigate("/templates");
         }, 3000);
       }
     };
     
     processAuth();
-  }, [navigate]);
+  }, [navigate]); // Keep navigate in dependency array
   
   return (
     <div className="container py-10 flex items-center justify-center min-h-[80vh]">

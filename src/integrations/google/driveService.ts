@@ -73,6 +73,15 @@ class GoogleDriveService {
       return;
     }
     
+    // Display a reminder toast about Google Cloud Console configuration
+    toast.info("Important for Production Use", {
+      description: "Make sure to add this URL to your Google Cloud OAuth authorized redirect URIs: " + redirectUri,
+      duration: 8000
+    });
+    
+    // Clear any previous auth completion flag
+    localStorage.removeItem('drive_auth_completed');
+    
     // Save current URL to return after auth
     localStorage.setItem('google_drive_auth_redirect', window.location.href);
     console.log("Saved redirect URL:", window.location.href);
