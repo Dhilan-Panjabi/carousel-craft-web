@@ -91,11 +91,18 @@ export const generateImagesFromPrompts = async (
     // For the prototype, we'll simulate the API call with a delay
     await new Promise(resolve => setTimeout(resolve, 2000));
     
-    // Mock image URLs
+    // Mock image URLs - using more reliable placeholder image services
     const imageUrls = prompts.map((prompt, index) => {
-      // In production, this would be the URL of the generated image
-      // For now, we'll use placeholder images
-      return `https://picsum.photos/seed/${jobId}-${index}/800/600`;
+      // Using a mix of reliable placeholder services to ensure images always load
+      const services = [
+        `https://source.unsplash.com/random/800x600?sig=${jobId}-${index}`,
+        `https://picsum.photos/seed/${jobId.substring(0, 5)}-${index}/800/600`,
+        `https://placehold.co/800x600/random/jpeg?text=Image+${index+1}&font=roboto`,
+        `https://fastly.picsum.photos/id/${(Math.abs(jobId.charCodeAt(0) + index * 10) % 1000) || 1}/800/600.jpg`
+      ];
+
+      // Pick one of the placeholder services based on the index
+      return services[index % services.length];
     });
     
     // In production, store references in the database
@@ -122,8 +129,10 @@ export const storeGeneratedImages = async (
       .insert(
         imageUrls.map((url, index) => ({
           job_id: jobId,
+          prompt_id: `prompt-${jobId}-${index}`, // Default prompt ID if not available
           image_url: url,
-          position: index,
+          width: 800, // Default width
+          height: 600, // Default height
           created_at: new Date().toISOString()
         }))
       );

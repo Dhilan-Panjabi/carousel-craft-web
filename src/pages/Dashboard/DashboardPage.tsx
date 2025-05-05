@@ -9,7 +9,18 @@ import {
 } from "@/components/ui/card";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowRight, Users, BarChart3, DollarSign, PlusCircle, Search } from "lucide-react";
+import { 
+  ArrowRight, 
+  Users, 
+  BarChart3, 
+  DollarSign, 
+  PlusCircle, 
+  Search,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  Play
+} from "lucide-react";
 import { 
   getAllTemplates, 
   Template,
@@ -29,15 +40,19 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { getAllJobs, JobData } from "@/integrations/jobs/jobService";
+import { Progress } from "@/components/ui/progress";
+import { formatDistanceToNow } from "date-fns";
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [jobs, setJobs] = useState<JobData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState({
     totalTemplates: 0,
-    activeJobs: 12,
-    imagesGenerated: 845
+    activeJobs: 0,
+    imagesGenerated: 0
   });
   const [quickSearch, setQuickSearch] = useState("");
   
@@ -50,7 +65,19 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadTemplates();
+    loadJobs();
+    
+    // Set up event listener for job updates
+    window.addEventListener('job-updated', handleJobUpdate);
+    
+    return () => {
+      window.removeEventListener('job-updated', handleJobUpdate);
+    };
   }, []);
+  
+  const handleJobUpdate = () => {
+    loadJobs();
+  };
 
   const loadTemplates = async () => {
     setIsLoading(true);
@@ -66,6 +93,31 @@ export default function DashboardPage() {
       toast.error("Failed to load templates");
     } finally {
       setIsLoading(false);
+    }
+  };
+  
+  const loadJobs = async () => {
+    try {
+      const jobsData = await getAllJobs();
+      setJobs(jobsData);
+      
+      // Calculate active jobs (queued + processing)
+      const activeJobs = jobsData.filter(
+        job => job.status === 'queued' || job.status === 'processing'
+      ).length;
+      
+      // Count total generated images
+      const totalImages = jobsData.reduce((sum, job) => {
+        return sum + (job.imageUrls?.length || 0);
+      }, 0);
+      
+      setStats(prev => ({
+        ...prev,
+        activeJobs,
+        imagesGenerated: totalImages
+      }));
+    } catch (error) {
+      console.error("Error loading jobs:", error);
     }
   };
 
@@ -127,6 +179,48 @@ export default function DashboardPage() {
     template.name.toLowerCase().includes(quickSearch.toLowerCase()) ||
     template.description.toLowerCase().includes(quickSearch.toLowerCase())
   );
+  
+  const formatDate = (dateString: string) => {
+    try {
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true });
+    } catch (error) {
+      return "Unknown date";
+    }
+  };
+  
+  const getStatusIcon = (status: JobData['status']) => {
+    switch (status) {
+      case "completed":
+        return <CheckCircle className="h-4 w-4 text-green-500" />;
+      case "processing":
+        return <Play className="h-4 w-4 text-blue-500" />;
+      case "failed":
+        return <AlertCircle className="h-4 w-4 text-red-500" />;
+      case "queued":
+        return <Clock className="h-4 w-4 text-yellow-500" />;
+      default:
+        return null;
+    }
+  };
+  
+  // Get last month's template count (simulated)
+  const lastMonthTemplateCount = Math.max(0, stats.totalTemplates - Math.floor(Math.random() * 6));
+  
+  // Get last month's job count (simulated)
+  const lastMonthJobCount = stats.activeJobs + 1;
+  
+  // Get last month's image count (simulated)
+  const lastMonthImageCount = Math.max(0, stats.imagesGenerated - 105);
+  
+  // Sort jobs by updatedAt date for recent activity
+  const recentJobs = [...jobs].sort((a, b) => 
+    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  ).slice(0, 5);
+  
+  // Get ongoing processes (jobs that are queued or processing)
+  const ongoingProcesses = jobs.filter(
+    job => job.status === 'queued' || job.status === 'processing'
+  ).slice(0, 3);
 
   return (
     <div className="container py-6">
@@ -153,7 +247,7 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-green-600">+{Math.max(0, stats.totalTemplates - 6)} since last month</p>
+            <p className="text-xs text-green-600">+{Math.max(0, stats.totalTemplates - lastMonthTemplateCount)} since last month</p>
           </CardContent>
         </Card>
         
@@ -166,7 +260,7 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-red-600">-1 since last month</p>
+            <p className="text-xs text-red-600">-{Math.max(0, lastMonthJobCount - stats.activeJobs)} since last month</p>
           </CardContent>
         </Card>
         
@@ -179,13 +273,13 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent>
-            <p className="text-xs text-green-600">+105 since last month</p>
+            <p className="text-xs text-green-600">+{Math.max(0, stats.imagesGenerated - lastMonthImageCount)} since last month</p>
           </CardContent>
         </Card>
       </div>
       
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        <Card className="md:col-span-2">
+        <Card className="md:col-span-1">
           <CardHeader>
             <CardTitle>Recent Activity</CardTitle>
             <CardDescription>
@@ -194,32 +288,33 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="flex justify-between items-center border-b pb-2">
-                <div>
-                  <p className="font-medium">Product Showcase</p>
-                  <p className="text-sm text-muted-foreground">24 images • Completed</p>
-                </div>
-                <p className="text-sm text-muted-foreground">2 hours ago</p>
-              </div>
-              <div className="flex justify-between items-center border-b pb-2">
-                <div>
-                  <p className="font-medium">Summer Sale</p>
-                  <p className="text-sm text-muted-foreground">12 images • Processing</p>
-                </div>
-                <p className="text-sm text-muted-foreground">5 hours ago</p>
-              </div>
-              <div className="flex justify-between items-center border-b pb-2">
-                <div>
-                  <p className="font-medium">Brand Assets</p>
-                  <p className="text-sm text-muted-foreground">36 images • Completed</p>
-                </div>
-                <p className="text-sm text-muted-foreground">Yesterday</p>
-              </div>
+              {recentJobs.length > 0 ? (
+                recentJobs.map(job => (
+                  <div 
+                    key={job.id} 
+                    className="flex justify-between items-center border-b pb-2 cursor-pointer"
+                    onClick={() => navigate(`/jobs/${job.id}`)}
+                  >
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(job.status)}
+                      <div>
+                        <p className="font-medium">{job.name}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {job.imageUrls?.length || 0} images • {job.status.charAt(0).toUpperCase() + job.status.slice(1)}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{formatDate(job.updatedAt)}</p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-muted-foreground text-sm">No recent activity</p>
+              )}
             </div>
           </CardContent>
         </Card>
         
-        <Card className="lg:row-span-2">
+        <Card className="md:col-span-1">
           <CardHeader>
             <CardTitle>Quick Links</CardTitle>
             <CardDescription>
@@ -243,8 +338,51 @@ export default function DashboardPage() {
             </div>
           </CardContent>
         </Card>
+        
+        <Card className="md:col-span-1">
+          <CardHeader>
+            <CardTitle>Ongoing Processes</CardTitle>
+            <CardDescription>
+              Currently running jobs
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {ongoingProcesses.length > 0 ? (
+                ongoingProcesses.map(job => (
+                  <div 
+                    key={job.id} 
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/jobs/${job.id}`)}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(job.status)}
+                        <p className="font-medium text-sm">{job.name}</p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">{job.progress}%</p>
+                    </div>
+                    <Progress value={job.progress} className="h-2 w-full mb-3" />
+                  </div>
+                ))
+              ) : (
+                <p className="text-muted-foreground text-sm">No active processes</p>
+              )}
+              
+              {ongoingProcesses.length > 0 && (
+                <Button 
+                  variant="outline" 
+                  className="w-full mt-2 text-sm"
+                  onClick={() => navigate("/jobs")}
+                >
+                  View All Jobs
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
-        <Card className="md:col-span-2">
+        <Card className="md:col-span-3">
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
               <CardTitle>Your Templates</CardTitle>
@@ -318,7 +456,7 @@ export default function DashboardPage() {
             </div>
             
             <ScrollArea className="h-[220px]">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {isLoading ? (
                   <p className="text-muted-foreground text-sm">Loading templates...</p>
                 ) : filteredTemplates.length > 0 ? (

@@ -1,8 +1,9 @@
 // Follow this setup guide to integrate the Deno runtime into your application:
 // https://deno.land/manual/examples/supabase
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
 import { corsHeaders } from '../_shared/cors.ts'
+import { decode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
 
 type GenerateRequest = {
   jobId: string;
@@ -14,24 +15,28 @@ type GenerateRequest = {
   dataContent?: Record<string, string>[] | string;
 }
 
-interface GeneratedPrompt {
+interface Prompt {
   id: string;
-  prompt: string;
+  content: string;
   dataVariables?: Record<string, string>;
 }
 
 interface GeneratedImage {
-  id: string;
-  promptId: string;
-  imageUrl: string;
-  width: number;
-  height: number;
-  generatedAt: string;
+  b64_json: string | null;
+  url: string | null;
+  revised_prompt: string;
 }
+
+interface UploadResult {
+  path: string;
+}
+
+console.log("Generate Images function booting up!");
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const STORAGE_BUCKET = 'generated-images-carousel';
 
 Deno.serve(async (req) => {
   // This is needed if you're planning to invoke your function from a browser.
@@ -40,6 +45,7 @@ Deno.serve(async (req) => {
   }
 
   try {
+    console.log("Request received");
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     
     // Get the request body
@@ -52,6 +58,8 @@ Deno.serve(async (req) => {
       );
     }
 
+    console.log(`Processing job: ${jobId}, variants: ${numVariants}`);
+
     // Detect if this is actually natural language content stored as 'script' type
     const isNaturalLanguage = dataType === 'script' && 
                             typeof dataContent === 'string' && 
@@ -60,6 +68,46 @@ Deno.serve(async (req) => {
                             !dataContent.includes('{') &&
                             !dataContent.includes('}');
 
+    // First, check if storage bucket exists, if not create it
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(bucket => bucket.name === STORAGE_BUCKET);
+    
+    if (!bucketExists) {
+      console.log(`Creating storage bucket: ${STORAGE_BUCKET}`);
+      const { error: bucketError } = await supabase.storage.createBucket(STORAGE_BUCKET, {
+        public: true, // Make images publicly accessible
+        fileSizeLimit: 5 * 1024 * 1024, // Limit to 5MB max file size
+        allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp'] // Only allow image formats
+      });
+      
+      if (bucketError) {
+        console.error('Error creating storage bucket:', bucketError);
+        throw new Error(`Failed to create storage bucket: ${bucketError.message}`);
+      }
+      
+      // Update the bucket policy to ensure public access
+      const { error: policyError } = await supabase.storage.from(STORAGE_BUCKET).createSignedUrl('test.txt', 10);
+      if (policyError) {
+        console.error('Warning: Error testing bucket policy:', policyError);
+      }
+      
+      console.log(`Successfully created bucket: ${STORAGE_BUCKET}`);
+    } else {
+      console.log(`Using existing bucket: ${STORAGE_BUCKET}`);
+      
+      // Check bucket permissions
+      try {
+        const { data: policy, error: policyError } = await supabase.storage.from(STORAGE_BUCKET).getPublicUrl('test.txt');
+        if (policyError) {
+          console.error('Warning: Error checking bucket policy:', policyError);
+        } else {
+          console.log('Bucket is properly configured for public access');
+        }
+      } catch (e) {
+        console.error('Error checking bucket policy:', e);
+      }
+    }
+
     // Update job status - Started
     await updateJobStatus(supabase, jobId, 'processing', 10, 'Starting generation process');
     
@@ -67,13 +115,15 @@ Deno.serve(async (req) => {
     await updateJobStatus(supabase, jobId, 'processing', 20, 'Generating prompts with GPT-4o');
     const prompts = await generatePrompts(templateId, templateName, templateDescription, numVariants, dataType, dataContent, isNaturalLanguage);
     
+    console.log(`Generated ${prompts.length} prompts`);
+    
     // Save prompts to database
     await supabase
       .from('carousel_prompts')
       .insert(prompts.map(prompt => ({
         id: prompt.id,
         job_id: jobId,
-        prompt_text: prompt.prompt,
+        prompt_text: prompt.content,
         data_variables: prompt.dataVariables || null,
         created_at: new Date().toISOString()
       })));
@@ -97,7 +147,7 @@ Deno.serve(async (req) => {
     
     // Generate images in batches of 5 to avoid rate limits
     const batchSize = 5;
-    const promptBatches = [];
+    const promptBatches: Prompt[][] = [];
     
     for (let i = 0; i < prompts.length; i += batchSize) {
       promptBatches.push(prompts.slice(i, i + batchSize));
@@ -107,21 +157,140 @@ Deno.serve(async (req) => {
       // Process each batch in parallel
       const batchPromises = promptBatch.map(async (prompt) => {
         try {
-          const image = await generateImage(prompt);
+          console.log(`Processing prompt: ${prompt.id}`);
+          
+          // Generate the image using OpenAI
+          const imageResult = await generateImageWithB64(prompt);
+          
+          if (!imageResult) {
+            console.error(`Failed to generate image for prompt ${prompt.id}`);
+            throw new Error(`Image generation failed for prompt ${prompt.id}`);
+          }
+          
+          let imageUrl = '';
+          let uploadResult: UploadResult | null = null;
+          
+          // Create a simpler unique filename
+          const filename = `${jobId}/${prompt.id}-${Date.now()}.png`;
+          
+          try {
+            if (imageResult.b64_json && imageResult.b64_json.length > 0) {
+              console.log(`Using base64 image data for prompt ${prompt.id}`);
+              
+              // Create blob directly as in the example
+              const imageBlob = new Blob([decode(imageResult.b64_json)], { type: 'image/png' });
+              const imageSize = imageBlob.size;
+              console.log(`Image blob size: ${(imageSize / (1024 * 1024)).toFixed(2)} MB`);
+              
+              // Upload with simpler parameters
+              const { data: uploadData, error: uploadError } = await supabase.storage
+                .from(STORAGE_BUCKET)
+                .upload(filename, imageBlob, {
+                  contentType: 'image/png',
+                  cacheControl: '3600',
+                  upsert: true
+                });
+              
+              if (uploadError) {
+                console.error('Error uploading image to storage:', JSON.stringify(uploadError));
+                throw uploadError;
+              }
+              
+              console.log(`Upload successful for prompt ${prompt.id}`);
+              uploadResult = { path: filename };
+            } else if (imageResult.url) {
+              console.log(`Fetching image from URL: ${imageResult.url}`);
+              
+              // Simple URL fetch
+              const imageResponse = await fetch(imageResult.url);
+              if (!imageResponse.ok) {
+                throw new Error(`Failed to fetch image from URL`);
+              }
+              
+              // Get as blob directly
+              const imageBlob = await imageResponse.blob();
+              console.log(`Image blob size: ${(imageBlob.size / (1024 * 1024)).toFixed(2)} MB`);
+              
+              // Upload with simpler parameters
+              const { data: uploadData, error: uploadError } = await supabase.storage
+                .from(STORAGE_BUCKET)
+                .upload(filename, imageBlob, {
+                  contentType: 'image/png',
+                  cacheControl: '3600',
+                  upsert: true
+                });
+              
+              if (uploadError) {
+                console.error('Error uploading image from URL:', JSON.stringify(uploadError));
+                // Use the direct URL if upload fails
+                imageUrl = imageResult.url;
+              } else {
+                console.log(`Successfully uploaded image from URL`);
+                uploadResult = { path: filename };
+              }
+            } else {
+              throw new Error(`No image data or URL available`);
+            }
+            
+            // Get the public URL for the uploaded image
+            if (uploadResult) {
+              const { data: publicUrlData } = supabase.storage
+                .from(STORAGE_BUCKET)
+                .getPublicUrl(uploadResult.path);
+              
+              if (!publicUrlData || !publicUrlData.publicUrl) {
+                throw new Error('Failed to get public URL');
+              }
+              
+              imageUrl = publicUrlData.publicUrl;
+              console.log(`Using storage URL: ${imageUrl}`);
+            } else if (!imageUrl) {
+              throw new Error(`Failed to get image URL`);
+            }
+          } catch (uploadError) {
+            console.error(`Error in upload process:`, uploadError);
+            
+            // If we have direct URL, use it as fallback
+            if (imageResult.url && !imageUrl) {
+              console.log(`Using direct URL as fallback: ${imageResult.url}`);
+              imageUrl = imageResult.url;
+            } else {
+              throw uploadError;
+            }
+          }
+          
+          // Create the image object
+          const image: GeneratedImage = {
+            b64_json: imageResult.b64_json,
+            url: imageResult.url,
+            revised_prompt: imageResult.revised_prompt || prompt.content
+          };
+          
           images.push(image);
           
           // Save image to database
-          await supabase
-            .from('carousel_images')
-            .insert({
-              id: image.id,
-              job_id: jobId,
-              prompt_id: prompt.id,
-              image_url: image.imageUrl,
-              width: image.width,
-              height: image.height,
-              created_at: image.generatedAt
-            });
+          try {
+            console.log(`Saving image record to database: ${image.id}`);
+            const { error: dbError } = await supabase
+              .from('carousel_images')
+              .insert({
+                id: image.id,
+                job_id: jobId,
+                prompt_id: prompt.id,
+                image_url: image.url,
+                b64_json: image.b64_json,
+                revised_prompt: image.revised_prompt,
+                created_at: new Date().toISOString()
+              });
+              
+            if (dbError) {
+              console.error(`Error saving image to database: ${JSON.stringify(dbError)}`);
+            } else {
+              console.log(`Image saved to database successfully`);
+            }
+          } catch (dbError) {
+            console.error(`Exception saving image to database: ${dbError instanceof Error ? dbError.message : String(dbError)}`);
+          }
           
           completedImages++;
           const progress = Math.floor(50 + (completedImages / prompts.length) * 50);
@@ -133,7 +302,8 @@ Deno.serve(async (req) => {
             'processing', 
             progress, 
             `Generated image ${completedImages} of ${prompts.length}`,
-            images.map(img => img.imageUrl)
+            images.map(img => img.url || ''),
+            prompts
           );
         } catch (error) {
           console.error(`Error generating image for prompt ${prompt.id}:`, error);
@@ -150,7 +320,7 @@ Deno.serve(async (req) => {
     }
     
     // Step 3: Finalize job
-    const imageUrls = images.map(img => img.imageUrl);
+    const imageUrls = images.map(img => img.url || '');
     await updateJobStatus(
       supabase, 
       jobId, 
@@ -174,11 +344,61 @@ Deno.serve(async (req) => {
     console.error('Error processing request:', error);
     
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
+
+/**
+ * Generate an image using OpenAI API
+ */
+async function generateImageWithB64(prompt: Prompt): Promise<GeneratedImage | null> {
+  try {
+    // Use a simple request with just the essential parameters
+    console.log(`Generating image for prompt: "${prompt.content.substring(0, 50)}..."`);
+    
+    const response = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-image-1',
+        prompt: prompt.content,
+        n: 1,
+        size: '1024x1024', // Standard size for better file size
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`OpenAI API error: ${response.status} ${response.statusText}`, errorText);
+      throw new Error(`OpenAI API error: ${response.status} ${response.statusText}`);
+    }
+
+    const responseJson = await response.json();
+    console.log(`OpenAI API response status: ${response.status}`);
+    
+    if (!responseJson.data || responseJson.data.length === 0) {
+      console.error('No image data returned from OpenAI');
+      return null;
+    }
+
+    // Extract the image data - focus on b64_json
+    const imageData = responseJson.data[0];
+    
+    return {
+      b64_json: imageData.b64_json || null,
+      url: imageData.url || null,
+      revised_prompt: imageData.revised_prompt || prompt.content
+    };
+  } catch (error) {
+    console.error('Error generating image:', error);
+    return null;
+  }
+}
 
 /**
  * Generate prompts using GPT-4o
@@ -186,253 +406,149 @@ Deno.serve(async (req) => {
 async function generatePrompts(
   templateId: string,
   templateName: string,
-  templateDescription: string | undefined,
-  numVariants: number,
-  dataType: 'csv' | 'script' | 'natural-language',
+  templateDescription?: string,
+  numVariants: number = 1,
+  dataType?: string,
   dataContent?: Record<string, string>[] | string,
-  isNaturalLanguage: boolean = false
-): Promise<GeneratedPrompt[]> {
+  isNaturalLanguage?: boolean
+): Promise<Prompt[]> {
   try {
-    const dataVariables = dataType === 'csv' && Array.isArray(dataContent) 
-      ? dataContent 
-      : undefined;
-    
-    // Get natural language content - either from explicit natural-language type or detected
-    const naturalLanguagePrompt = (dataType === 'natural-language' || isNaturalLanguage) && typeof dataContent === 'string'
-      ? dataContent
-      : undefined;
-
-    // Try to fetch template details if available
-    let templateData = null;
-    try {
-      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-      const { data, error } = await supabase
-        .from('templates')
-        .select('*')
-        .eq('id', templateId)
-        .single();
-      
-      if (!error && data) {
-        templateData = data;
-      }
-    } catch (error) {
-      console.log('Could not fetch template details:', error);
-      // Continue without template data
+    if (!OPENAI_API_KEY) {
+      console.error('No OpenAI API key available for prompt generation');
+      throw new Error('OpenAI API key is required for prompt generation');
     }
-
-    // In a production environment, you would call the OpenAI API
-    // For this example, we'll simulate the response
     
-    // If we have real API access, this is how we'd call it
-    if (OPENAI_API_KEY) {
-      // Build a system prompt for GPT-4o that explains how to create carousel image prompts
-      const systemPrompt = `
-        You are an expert at creating detailed image generation prompts for social media carousels.
+    console.log('Generating prompts with OpenAI API');
+
+    let content: string;
+    
+    // Handle based on data type
+    if (isNaturalLanguage || dataType === 'natural-language') {
+      // If it's natural language, use it directly as part of the prompt
+      content = `
+        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
         
-        You'll be given a template name and optionally a description and data variables.
-        Your task is to create unique, detailed image prompts that would work well with GPT-image-1
-        for generating visually appealing carousel images.
+        User's instructions:
+        ${dataContent}
         
-        The prompts should:
-        1. Be highly detailed with clear art direction including composition, colors, mood, and lighting
-        2. Include specific style guidance (e.g., photorealistic, illustration, etc.)
-        3. Use structured sections like "Art Direction:", "Composition:", "Colors:", "Mood:", "Lighting:", and "Text Elements:"
-        4. Include any text elements that should appear in the image
-        5. Maintain brand consistency if applicable
-        6. Be at least 100 words long with rich descriptive details
-        7. Reference the template's visual style and purpose
+        For each image, provide a comprehensive prompt that covers:
+        - Art Direction: Overall style and visual approach
+        - Composition: Layout and arrangement of elements
+        - Colors: Color palette and tone
+        - Mood: Emotional feel of the image
+        - Lighting: How the image should be lit
+        - Text Elements: Any text to include in the image
         
-        For each prompt, create something unique but related to the template theme.
+        Format each prompt as: "**Art Direction:** [details]" etc.
+        
+        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
       `;
-      
-      // Build user prompt based on template and variables
-      let userPrompt = `Create ${numVariants} unique image generation prompts for a carousel template called "${templateName}"`;
-      
-      if (templateDescription) {
-        userPrompt += ` that ${templateDescription}`;
-      }
+    } else if (dataType === 'script' && typeof dataContent === 'string') {
+      // If it's a script, extract variables from it if possible
+      content = `
+        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
+        
+        Use this JavaScript code to understand what variables/data to include:
+        \`\`\`javascript
+        ${dataContent}
+        \`\`\`
+        
+        For each image, provide a comprehensive prompt that covers:
+        - Art Direction: Overall style and visual approach
+        - Composition: Layout and arrangement of elements
+        - Colors: Color palette and tone
+        - Mood: Emotional feel of the image
+        - Lighting: How the image should be lit
+        - Text Elements: Any text to include in the image
+        
+        Format each prompt as: "**Art Direction:** [details]" etc.
+        
+        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
+      `;
+    } else if (dataType === 'csv' && Array.isArray(dataContent)) {
+      // If it's CSV data, add it to the prompt
+      content = `
+        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
+        
+        Use these data variables for each prompt:
+        ${JSON.stringify(dataContent)}
+        
+        For each image, provide a comprehensive prompt that covers:
+        - Art Direction: Overall style and visual approach
+        - Composition: Layout and arrangement of elements
+        - Colors: Color palette and tone
+        - Mood: Emotional feel of the image
+        - Lighting: How the image should be lit
+        - Text Elements: Any text to include in the image
+        
+        Format each prompt as: "**Art Direction:** [details]" etc.
+        
+        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
+      `;
+    } else {
+      // Default case
+      content = `
+        Create detailed prompts for ${numVariants} images using GPT-image-1 that would work well in a carousel template named "${templateName}"${templateDescription ? ' that ' + templateDescription : ''}.
+        
+        For each image, provide a comprehensive prompt that covers:
+        - Art Direction: Overall style and visual approach
+        - Composition: Layout and arrangement of elements
+        - Colors: Color palette and tone
+        - Mood: Emotional feel of the image
+        - Lighting: How the image should be lit
+        - Text Elements: Any text to include in the image
+        
+        Format each prompt as: "**Art Direction:** [details]" etc.
+        
+        Return ONLY the array of ${numVariants} prompts with NO extra text or explanation.
+      `;
+    }
 
-      if (templateData) {
-        userPrompt += `\n\nThis template has the following details:`;
-        if (templateData.description) {
-          userPrompt += `\nDescription: ${templateData.description}`;
-        }
-        if (templateData.thumbnail_url) {
-          userPrompt += `\nIt has a thumbnail image that should inspire the style.`;
-        }
-        if (templateData.slides) {
-          userPrompt += `\nThe template has multiple slides with a cohesive design that should be maintained.`;
-        }
-      }
-      
-      if (naturalLanguagePrompt) {
-        userPrompt += `\n\nUse the following description to guide the content of your prompts:\n${naturalLanguagePrompt}`;
-      } else if (dataVariables && dataVariables.length > 0) {
-        userPrompt += `\n\nFor each prompt, incorporate these data variables where appropriate:`;
-        userPrompt += `\n${JSON.stringify(dataVariables, null, 2)}`;
-        userPrompt += `\n\nMap each set of variables to a different prompt.`;
-      }
-      
-      userPrompt += `\n\nThe prompts should be structured with clear sections for Art Direction, Composition, Colors, Mood, Lighting, and Text Elements to help the image generation model create consistent, high-quality images.`;
-      
-      // Call OpenAI API for prompt generation
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.7
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(`OpenAI API error: ${result.error?.message || 'Unknown error'}`);
-      }
-      
-      // Parse the generated prompts from the response
-      const generatedContent = result.choices[0].message.content;
-      const promptTexts = extractPromptsFromText(generatedContent);
-      
-      // Map to the expected format
-      return promptTexts.map((promptText, index) => ({
-        id: `prompt-${templateId}-${index}`,
-        prompt: promptText,
-        dataVariables: dataVariables && index < dataVariables.length ? dataVariables[index] : undefined
-      }));
+    // Call the OpenAI API
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: 'You are an expert at creating descriptive prompts for image generation. Your task is to create detailed prompts that will be used to generate images with GPT-image-1.' },
+          { role: 'user', content }
+        ],
+        temperature: 0.7
+      })
+    });
+
+    const result = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${result.error?.message || 'Unknown error'}`);
     }
     
-    // Fallback to mock data if no API key
-    const prompts: GeneratedPrompt[] = [];
+    // Parse the response to extract the prompts
+    const generatedText = result.choices[0].message.content;
     
-    // Generate mock prompts for the specified number of variants
-    for (let i = 0; i < numVariants; i++) {
-      // Use data variables if available, otherwise generate random prompts
-      const currentVariables = dataVariables && dataVariables[i % dataVariables.length];
-      
-      let promptText = `Create a visually stunning carousel image for "${templateName}"`;
-      
-      if (templateDescription) {
-        promptText += ` that ${templateDescription}`;
-      }
-      
-      if (currentVariables) {
-        // Add variables to the prompt
-        Object.entries(currentVariables).forEach(([key, value]) => {
-          promptText += ` with ${key}: "${value}"`;
-        });
-      }
-      
-      // Add some variation to each prompt
-      const styles = [
-        "in a minimalist style with clean typography and soft pastel colors",
-        "with vibrant colors, bold typography, and eye-catching graphics",
-        "in a professional corporate style with blue and gray color scheme",
-        "with a youthful energetic feel using bright colors and playful icons",
-        "with elegant typography on a gradient background with subtle patterns",
-        "using a dark mode aesthetic with neon accents and modern sans-serif fonts",
-        "with a vintage filter applied, sepia tones and classic serif typography",
-        "in a hand-drawn illustration style with sketched elements and handwritten text"
-      ];
-      
-      promptText += ` ${styles[i % styles.length]}.`;
-      
-      prompts.push({
-        id: `prompt-${templateId}-${i}`,
-        prompt: promptText,
-        dataVariables: currentVariables
-      });
+    // Extract prompts - the format will depend on how GPT-4o formats its response
+    // We expect each prompt to be formatted as "**Art Direction:** [details]" etc.
+    // Split the text into separate prompts
+    const promptMatches = generatedText.split(/\n{2,}/).filter(Boolean);
+    
+    if (promptMatches.length === 0) {
+      throw new Error('No valid prompts were generated');
     }
-    
-    return prompts;
-  } catch (error) {
-    console.error("Error generating prompts:", error);
-    throw error;
-  }
-}
 
-/**
- * Helper function to extract prompts from GPT-4o response text
- */
-function extractPromptsFromText(text: string): string[] {
-  // This is a simple implementation that assumes the model returns numbered prompts
-  // A more robust implementation would handle various response formats
-  const promptRegex = /\d+[\.\)]\s*(.*?)(?=\n\d+[\.\)]|$)/gs;
-  const matches = [...text.matchAll(promptRegex)];
-  
-  if (matches.length === 0) {
-    // Fallback: split by double newlines if no numbered format is detected
-    return text.split(/\n\n+/).filter(Boolean);
-  }
-  
-  return matches.map(match => match[1].trim());
-}
-
-/**
- * Generate an image using GPT-image-1
- */
-async function generateImage(prompt: GeneratedPrompt): Promise<GeneratedImage> {
-  try {
-    // In a production environment, you would call the OpenAI API
-    if (OPENAI_API_KEY) {
-      // First we'll use the correct endpoint for GPT-image-1
-      const response = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: 'gpt-image-1', // The correct GPT image generation model name
-          prompt: prompt.prompt,
-          n: 1,
-          size: '1024x1024',
-          quality: 'high'
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok) {
-        throw new Error(`OpenAI API error: ${result.error?.message || 'Unknown error'}`);
-      }
-      
-      // The response structure for the image API
-      const generatedImage = result.data[0];
-      
+    // Create the array of prompts
+    return promptMatches.slice(0, numVariants).map((promptText, index) => {
       return {
-        id: `image-${prompt.id}`,
-        promptId: prompt.id,
-        imageUrl: generatedImage.url,
-        width: 1024,
-        height: 1024,
-        generatedAt: new Date().toISOString()
+        id: `prompt-${templateId}-${index}`,
+        content: promptText.trim(),
+        dataVariables: Array.isArray(dataContent) && index < dataContent.length ? dataContent[index] : undefined
       };
-    }
-    
-    // Fallback to mock data
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // For the example, use random placeholder images
-    const randomId = Math.floor(Math.random() * 1000);
-    return {
-      id: `image-${prompt.id}`,
-      promptId: prompt.id,
-      imageUrl: `https://picsum.photos/seed/${prompt.id}-${randomId}/1024/1024`,
-      width: 1024,
-      height: 1024,
-      generatedAt: new Date().toISOString()
-    };
+    });
   } catch (error) {
-    console.error(`Error generating image for prompt ${prompt.id}:`, error);
+    console.error('Error generating prompts:', error);
     throw error;
   }
 }
@@ -441,13 +557,13 @@ async function generateImage(prompt: GeneratedPrompt): Promise<GeneratedImage> {
  * Update job status in the database
  */
 async function updateJobStatus(
-  supabase: any,
+  supabase: SupabaseClient,
   jobId: string,
   status: 'queued' | 'processing' | 'completed' | 'failed',
   progress: number,
   message?: string,
   imageUrls?: string[],
-  prompts?: GeneratedPrompt[]
+  prompts?: Prompt[]
 ) {
   try {
     const { error } = await supabase

@@ -5,6 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SafeImage, ImagePreloader } from "@/components/ui/safe-image";
 import { 
   ArrowLeft, 
   Download, 
@@ -13,12 +14,14 @@ import {
   Clock,
   AlertCircle,
   Play,
-  ImageIcon,
+  Image as ImageIcon,
   DownloadCloud,
   ChevronDown,
   ChevronUp,
   Sparkles,
-  Images
+  Images,
+  X,
+  Trash2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useJobUpdates } from "@/hooks/useJobUpdates";
@@ -28,16 +31,39 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Dialog,
+  DialogContent,
+  DialogClose,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { deleteJob } from "@/integrations/jobs/jobService";
 
 export default function JobDetailsPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const [isDownloading, setIsDownloading] = useState(false);
   const [openPromptsSection, setOpenPromptsSection] = useState(false);
   const [selectedPromptIndex, setSelectedPromptIndex] = useState<number | null>(null);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [isImagePreviewOpen, setIsImagePreviewOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [failedImageUrls, setFailedImageUrls] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
   const { toast } = useToast();
   
   const { job, isLoading } = useJobUpdates({ jobId });
+  
+  // Preload images when they're available
+  useEffect(() => {
+    if (job?.imageUrls && job.imageUrls.length > 0) {
+      // Add the preloader component
+      console.log(`Preloading ${job.imageUrls.length} images`);
+    }
+  }, [job?.imageUrls]);
   
   if (isLoading || !job) {
     return (
@@ -64,6 +90,11 @@ export default function JobDetailsPage() {
       </div>
     );
   }
+
+  const handleImagePreview = (url: string) => {
+    setSelectedImageUrl(url);
+    setIsImagePreviewOpen(true);
+  };
   
   const handleDownload = async () => {
     if (!job || !job.imageUrls || job.imageUrls.length === 0) return;
@@ -128,37 +159,137 @@ export default function JobDetailsPage() {
     // In a real app, we would have a more robust way to match images to prompts
     // For the prototype, we'll assume the order matches
     const promptIndex = job.prompts?.findIndex(p => p.id === promptId) || -1;
-    return promptIndex >= 0 && promptIndex < job.imageUrls.length 
+    const imageUrl = promptIndex >= 0 && promptIndex < job.imageUrls.length 
       ? job.imageUrls[promptIndex] 
       : undefined;
+    
+    // Don't return URLs that have already failed
+    return imageUrl && !failedImageUrls.has(imageUrl) ? imageUrl : undefined;
+  };
+
+  // Handler for image load errors
+  const handleImageError = (url: string, element: HTMLImageElement) => {
+    // Only log once and add to failed URLs set
+    if (!failedImageUrls.has(url)) {
+      console.error(`Failed to load image from URL: ${url}`);
+      setFailedImageUrls(prev => new Set(prev).add(url));
+    }
+    
+    // Hide the image
+    element.classList.add("hidden");
+    
+    // Add an error placeholder if it doesn't exist already
+    if (!element.nextElementSibling || !element.nextElementSibling.classList.contains("image-error-placeholder")) {
+      const parent = element.parentElement;
+      if (parent) {
+        parent.classList.add("flex", "items-center", "justify-center");
+        
+        const errorDiv = document.createElement("div");
+        errorDiv.className = "text-center p-4 image-error-placeholder";
+        errorDiv.innerHTML = `
+          <div class="mx-auto mb-2 text-muted-foreground">Image failed to load</div>
+          <div class="flex justify-center mt-2">
+            <button class="px-2 py-1 text-xs bg-muted text-muted-foreground rounded hover:bg-muted/90">View URL</button>
+          </div>
+        `;
+        
+        // View URL button
+        errorDiv.querySelector("button")?.addEventListener("click", () => {
+          window.open(url, '_blank');
+        });
+        
+        parent.appendChild(errorDiv);
+      }
+    }
+  };
+
+  const handleSingleImageDownload = (url: string, index: number) => {
+    // Create a temporary link to download the image
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `image-${job.id}-${index}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
   
+  const handleDeleteClick = () => {
+    setIsDeleteDialogOpen(true);
+  };
+  
+  const handleDeleteConfirm = async () => {
+    if (!job) return;
+    
+    setIsDeleting(true);
+    try {
+      const success = await deleteJob(job.id);
+      if (success) {
+        toast({
+          title: "Job deleted",
+          description: `${job.name} has been deleted successfully.`,
+        });
+        navigate('/jobs'); // Navigate back to jobs list
+      } else {
+        toast({
+          title: "Delete failed",
+          description: "There was a problem deleting the job.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error deleting job:", error);
+      toast({
+        title: "Delete failed",
+        description: "There was a problem deleting the job.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+      setIsDeleteDialogOpen(false);
+    }
+  };
+
   return (
     <div className="container py-8">
-      <div className="flex items-center justify-between mb-8">
-        <Button variant="ghost" onClick={() => navigate('/jobs')} className="mr-2">
-          <ArrowLeft className="h-4 w-4 mr-2" />
+      <div className="flex items-center justify-between mb-6">
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => navigate("/jobs")}
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" />
           Back to Jobs
         </Button>
         
-        {job.status === "completed" && job.imageUrls && job.imageUrls.length > 0 && (
+        <div className="flex space-x-2">
+          {job?.status === "completed" && job?.imageUrls && job?.imageUrls.length > 0 && (
+            <Button 
+              onClick={handleDownload}
+              disabled={isDownloading}
+              size="sm"
+            >
+              {isDownloading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <DownloadCloud className="h-4 w-4 mr-2" />
+                  Download All Images
+                </>
+              )}
+            </Button>
+          )}
           <Button 
-            onClick={handleDownload}
-            disabled={isDownloading}
+            variant="destructive" 
+            size="sm" 
+            onClick={handleDeleteClick}
           >
-            {isDownloading ? (
-              <>
-                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                Downloading...
-              </>
-            ) : (
-              <>
-                <DownloadCloud className="h-4 w-4 mr-2" />
-                Download All Images
-              </>
-            )}
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete Job
           </Button>
-        )}
+        </div>
       </div>
       
       <h1 className="text-3xl font-bold mb-2">{job.name}</h1>
@@ -377,13 +508,21 @@ export default function JobDetailsPage() {
                       <img 
                         src={getImageForPrompt(job.prompts[selectedPromptIndex].id)} 
                         alt={`Generated from prompt ${selectedPromptIndex + 1}`}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full object-cover cursor-pointer"
+                        onClick={() => {
+                          const imageUrl = getImageForPrompt(job.prompts[selectedPromptIndex].id);
+                          if (imageUrl) handleImagePreview(imageUrl);
+                        }}
+                        onError={(e) => {
+                          const url = getImageForPrompt(job.prompts[selectedPromptIndex].id);
+                          if (url) handleImageError(url, e.currentTarget);
+                        }}
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-muted-foreground">
                         <div className="text-center">
                           <ImageIcon className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                          <p className="text-sm">No image generated yet</p>
+                          <p className="text-sm">No image available</p>
                         </div>
                       </div>
                     )}
@@ -398,6 +537,9 @@ export default function JobDetailsPage() {
       {/* Generated Images Gallery */}
       {job.imageUrls && job.imageUrls.length > 0 && (
         <div>
+          {/* Add preloader for all images */}
+          <ImagePreloader urls={job.imageUrls} />
+          
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-medium">Generated Images</h2>
             <Button variant="outline" onClick={() => navigate('/library')}>
@@ -407,25 +549,40 @@ export default function JobDetailsPage() {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {job.imageUrls.map((url, index) => (
-              <div key={index} className="group relative aspect-square border rounded-md overflow-hidden">
-                <img 
-                  src={url} 
+              <div key={index} className="group relative aspect-square border rounded-md overflow-hidden bg-muted">
+                <SafeImage 
+                  src={url}
                   alt={`Generated image ${index + 1}`}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover cursor-pointer"
+                  onImageClick={(url) => handleImagePreview(url)}
                 />
                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="bg-white/20 backdrop-blur-sm"
-                    title="Download Image"
-                    onClick={() => {
-                      // In production, this would download the individual image
-                      window.open(url, '_blank');
-                    }}
-                  >
-                    <Download className="h-4 w-4" />
-                  </Button>
+                  <div className="flex space-x-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="bg-white/20 backdrop-blur-sm"
+                      title="View Image"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleImagePreview(url);
+                      }}
+                    >
+                      <ImageIcon className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="bg-white/20 backdrop-blur-sm"
+                      title="Download Image"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSingleImageDownload(url, index);
+                      }}
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -442,6 +599,81 @@ export default function JobDetailsPage() {
           </p>
         </div>
       )}
+
+      {/* Image Preview Dialog */}
+      <Dialog open={isImagePreviewOpen} onOpenChange={setIsImagePreviewOpen}>
+        <DialogContent className="max-w-5xl p-0 overflow-hidden">
+          <div className="relative">
+            <DialogClose className="absolute right-2 top-2 z-10">
+              <Button variant="ghost" size="icon" className="h-8 w-8 bg-black/40 backdrop-blur-sm">
+                <X className="h-4 w-4 text-white" />
+              </Button>
+            </DialogClose>
+            <div className="max-h-[80vh] flex items-center justify-center p-1 bg-black">
+              <SafeImage 
+                src={selectedImageUrl}
+                alt="Preview"
+                className="max-w-full max-h-[80vh] object-contain"
+                fallback={
+                  <div className="flex items-center justify-center p-12 text-white">
+                    <div className="text-center">
+                      <AlertCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                      <p>Image could not be loaded</p>
+                    </div>
+                  </div>
+                }
+              />
+            </div>
+            <div className="p-4 bg-background flex justify-between items-center">
+              <Button 
+                variant="outline" 
+                onClick={() => setIsImagePreviewOpen(false)}
+              >
+                Close
+              </Button>
+              <Button 
+                onClick={() => {
+                  if (selectedImageUrl) {
+                    const index = job.imageUrls?.indexOf(selectedImageUrl) ?? 0;
+                    handleSingleImageDownload(selectedImageUrl, index);
+                  }
+                }}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Job</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{job?.name}"? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2 mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteConfirm}
+              disabled={isDeleting}
+            >
+              {isDeleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 } 

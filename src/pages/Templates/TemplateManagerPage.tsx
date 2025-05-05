@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Upload, Plus, ImageIcon, Cloud, Search, Folder, ChevronRight, ArrowLeft, Check, PlusCircle, Trash2, X, ChevronLeft, Star } from "lucide-react";
+import { Upload, Plus, ImageIcon, Cloud, Search, Folder, ChevronRight, ArrowLeft, Check, PlusCircle, Trash2, X, ChevronLeft, Star, BarChart3, ExternalLink } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +25,7 @@ import {
   toggleFavorite,
   Template
 } from "@/integrations/supabase/templateService";
+import { getJobsByTemplateId, JobData } from "@/integrations/jobs/jobService";
 import driveService from "@/integrations/google/driveService";
 import { 
   Sheet, 
@@ -39,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { useNavigate } from "react-router-dom";
 import "./TemplateManagerPage.css";
 
 interface GoogleDriveFile {
@@ -57,6 +59,7 @@ interface FolderPathItem {
 }
 
 export default function TemplateManagerPage() {
+  const navigate = useNavigate();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [activeTab, setActiveTab] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
@@ -96,6 +99,9 @@ export default function TemplateManagerPage() {
   const [templateToDelete, setTemplateToDelete] = useState<Template | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Template jobs state
+  const [templateJobs, setTemplateJobs] = useState<Record<string, JobData[]>>({});
+
   // Load templates on mount
   useEffect(() => {
     loadTemplates();
@@ -115,6 +121,16 @@ export default function TemplateManagerPage() {
     try {
       const templateData = await getAllTemplates();
       setTemplates(templateData);
+      
+      // Load jobs for each template
+      const jobsByTemplate: Record<string, JobData[]> = {};
+      for (const template of templateData) {
+        const jobs = getJobsByTemplateId(template.id);
+        if (jobs.length > 0) {
+          jobsByTemplate[template.id] = jobs;
+        }
+      }
+      setTemplateJobs(jobsByTemplate);
     } catch (error) {
       console.error("Error loading templates:", error);
       toast.error("Failed to load templates", {
@@ -564,6 +580,25 @@ export default function TemplateManagerPage() {
     }
   };
 
+  const getCompletedJobsCount = (templateId: string): number => {
+    return (templateJobs[templateId] || [])
+      .filter(job => job.status === 'completed')
+      .length;
+  };
+  
+  const getTotalImagesCount = (templateId: string): number => {
+    return (templateJobs[templateId] || [])
+      .reduce((total, job) => total + (job.imageUrls?.length || 0), 0);
+  };
+  
+  const handleViewJobsForTemplate = (templateId: string) => {
+    navigate(`/jobs?templateId=${templateId}`);
+  };
+  
+  const handleViewImagesForTemplate = (templateId: string) => {
+    navigate(`/library?templateId=${templateId}`);
+  };
+
   return (
     <div className="container py-8">
       <div className="flex items-center justify-between mb-6">
@@ -923,6 +958,48 @@ export default function TemplateManagerPage() {
                         </p>
                       </div>
                     </div>
+                    
+                    {/* Add job related info here */}
+                    {templateJobs[template.id] && templateJobs[template.id].length > 0 && (
+                      <>
+                        <Separator className="my-2" />
+                        <div className="flex items-center gap-2 mt-2 mb-2">
+                          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm text-muted-foreground">
+                            {getCompletedJobsCount(template.id)} completed jobs, {getTotalImagesCount(template.id)} images
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button 
+                            variant="link" 
+                            size="sm" 
+                            className="h-6 p-0 text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewJobsForTemplate(template.id);
+                            }}
+                          >
+                            View Jobs
+                            <ExternalLink className="h-3 w-3 ml-1" />
+                          </Button>
+                          {getTotalImagesCount(template.id) > 0 && (
+                            <Button 
+                              variant="link" 
+                              size="sm" 
+                              className="h-6 p-0 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewImagesForTemplate(template.id);
+                              }}
+                            >
+                              View Images
+                              <ExternalLink className="h-3 w-3 ml-1" />
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
+
                     <div className="flex justify-end mt-4 gap-2">
                       <Button 
                         variant="outline" 
@@ -1023,6 +1100,48 @@ export default function TemplateManagerPage() {
                         </p>
                       </div>
                     </div>
+                    
+                    {/* Add job related info here */}
+                    {templateJobs[template.id] && templateJobs[template.id].length > 0 && (
+                      <>
+                        <Separator className="my-2" />
+                        <div className="flex items-center gap-2 mt-2 mb-2">
+                          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm text-muted-foreground">
+                            {getCompletedJobsCount(template.id)} completed jobs, {getTotalImagesCount(template.id)} images
+                          </span>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button 
+                            variant="link" 
+                            size="sm" 
+                            className="h-6 p-0 text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewJobsForTemplate(template.id);
+                            }}
+                          >
+                            View Jobs
+                            <ExternalLink className="h-3 w-3 ml-1" />
+                          </Button>
+                          {getTotalImagesCount(template.id) > 0 && (
+                            <Button 
+                              variant="link" 
+                              size="sm" 
+                              className="h-6 p-0 text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewImagesForTemplate(template.id);
+                              }}
+                            >
+                              View Images
+                              <ExternalLink className="h-3 w-3 ml-1" />
+                            </Button>
+                          )}
+                        </div>
+                      </>
+                    )}
+
                     <div className="flex justify-end mt-4 gap-2">
                       <Button 
                         variant="outline" 

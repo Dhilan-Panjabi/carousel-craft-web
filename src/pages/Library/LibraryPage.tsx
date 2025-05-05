@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Download, Search, Filter, Image, Clock } from "lucide-react";
+import { Download, Search, Filter, Image, Clock, X } from "lucide-react";
 import { getAllJobs, JobData } from "@/integrations/jobs/jobService";
 import {
   Select,
@@ -22,6 +22,7 @@ import {
   DialogFooter,
   DialogClose
 } from "@/components/ui/dialog";
+import { useNavigate, useLocation } from "react-router-dom";
 
 interface LibraryImage {
   id: string;
@@ -29,22 +30,31 @@ interface LibraryImage {
   jobId: string;
   jobName: string;
   template: string;
+  templateId?: string;
   createdAt: string;
   promptId?: string;
   prompt?: string;
 }
 
 export default function LibraryPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [imageFilter, setImageFilter] = useState("all");
   const [selectedImage, setSelectedImage] = useState<LibraryImage | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [showOnlyCompleted, setShowOnlyCompleted] = useState(true);
   const [images, setImages] = useState<LibraryImage[]>([]);
+  const [templateId, setTemplateId] = useState<string | null>(null);
   
   useEffect(() => {
+    // Parse query parameters
+    const params = new URLSearchParams(location.search);
+    const templateIdParam = params.get('templateId');
+    setTemplateId(templateIdParam);
+    
     // Load all jobs and extract images
-    loadImages();
+    loadImages(templateIdParam);
     
     // Listen for job updates
     window.addEventListener('job-updated', handleJobUpdate);
@@ -52,17 +62,23 @@ export default function LibraryPage() {
     return () => {
       window.removeEventListener('job-updated', handleJobUpdate);
     };
-  }, []);
+  }, [location.search]);
   
   const handleJobUpdate = () => {
-    loadImages();
+    loadImages(templateId);
   };
   
-  const loadImages = () => {
+  const loadImages = (filterTemplateId: string | null = null) => {
     const jobs = getAllJobs();
+    
+    // Filter jobs by template ID if specified
+    const filteredJobs = filterTemplateId 
+      ? jobs.filter(job => job.templateId === filterTemplateId) 
+      : jobs;
+    
     const extractedImages: LibraryImage[] = [];
     
-    jobs.forEach(job => {
+    filteredJobs.forEach(job => {
       // Skip jobs that aren't completed if filter is on
       if (showOnlyCompleted && job.status !== 'completed') return;
       
@@ -78,6 +94,7 @@ export default function LibraryPage() {
             jobId: job.id,
             jobName: job.name,
             template: job.templateName,
+            templateId: job.templateId,
             createdAt: job.updatedAt,
             promptId,
             prompt
@@ -146,7 +163,23 @@ export default function LibraryPage() {
   
   return (
     <div className="container py-8">
-      <h1 className="text-3xl font-bold mb-6">Image Library</h1>
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h1 className="text-3xl font-bold">Image Library</h1>
+          {templateId && (
+            <p className="text-muted-foreground flex items-center">
+              Filtered by template
+              <Button 
+                variant="link" 
+                className="p-0 h-auto text-sm ml-2"
+                onClick={() => navigate('/library')}
+              >
+                Clear filter
+              </Button>
+            </p>
+          )}
+        </div>
+      </div>
       
       <div className="flex flex-col md:flex-row gap-4 mb-6">
         <div className="relative flex-1">
@@ -160,7 +193,11 @@ export default function LibraryPage() {
         </div>
         
         <div className="flex flex-row gap-4">
-          <Select value={imageFilter} onValueChange={handleFilterChange}>
+          <Select 
+            value={imageFilter} 
+            onValueChange={handleFilterChange}
+            disabled={!!templateId} // Disable when filtering by templateId
+          >
             <SelectTrigger className="w-[180px]">
               <Filter className="h-4 w-4 mr-2" />
               <SelectValue placeholder="Filter by template" />
