@@ -1,4 +1,3 @@
-
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -7,6 +6,7 @@ import {
   Share2,
   User,
   Search,
+  Home,
 } from "lucide-react";
 import {
   Sidebar,
@@ -19,6 +19,7 @@ import {
   SidebarFooter,
   SidebarInput,
 } from "@/components/ui/sidebar";
+import { useSidebar } from "@/components/ui/sidebar";
 
 // Navigation items
 const navigationItems = [
@@ -51,19 +52,22 @@ const navigationItems = [
 
 export function AppSidebar() {
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon">
       <SidebarHeader className="flex items-center px-4 py-2">
         <NavLink
           to="/"
-          className="flex items-center gap-2 font-semibold"
+          className="flex items-center gap-2 font-semibold transition-opacity"
         >
-          <span className="text-xl font-bold brand-gradient">
+          <Home className="h-5 w-5 shrink-0" />
+          <span className="text-xl font-bold brand-gradient group-data-[state=collapsed]:hidden">
             Carousel Gen
           </span>
         </NavLink>
         <SidebarTrigger className="ml-auto" />
       </SidebarHeader>
-      <div className="px-4 pb-4">
+      
+      {/* Search input - only visible when expanded */}
+      <div className="px-4 pb-4 group-data-[state=collapsed]:hidden">
         <div className="relative">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <SidebarInput
@@ -73,6 +77,7 @@ export function AppSidebar() {
           />
         </div>
       </div>
+      
       <SidebarContent>
         <SidebarMenu>
           {navigationItems.map((item) => (
@@ -93,8 +98,8 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarContent>
       <SidebarFooter>
-        <div className="flex items-center justify-between px-4 py-2">
-          <span className="text-xs text-muted-foreground">
+        <div className="flex items-center justify-between px-4 py-2 group-data-[state=collapsed]:justify-center">
+          <span className="text-xs text-muted-foreground group-data-[state=collapsed]:hidden">
             v1.0.0
           </span>
         </div>

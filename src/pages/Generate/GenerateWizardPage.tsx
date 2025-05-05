@@ -1,6 +1,5 @@
-
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,19 +16,21 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CardFooter,
 } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, FileUp, AlertCircle, ArrowRight, ArrowLeft } from "lucide-react";
+import { Upload, FileUp, AlertCircle, ArrowRight, ArrowLeft, Loader2, ImageIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { parseCSV, CSVRow } from "@/lib/csvParse";
 import { supabase } from "@/integrations/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-
-const mockTemplates = [
-  { id: "1", name: "Product Showcase" },
-  { id: "2", name: "Testimonial Cards" },
-  { id: "3", name: "Promotion Template" },
-];
+import { 
+  getAllTemplates, 
+  Template
+} from "@/integrations/supabase/templateService";
+import { toast as sonnerToast } from "sonner";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 
 export default function GenerateWizardPage() {
   const [step, setStep] = useState(1);
@@ -42,8 +43,48 @@ export default function GenerateWizardPage() {
   const [isDataSource, setIsDataSource] = useState<"csv" | "script">("csv");
   const [isSubmitting, setIsSubmitting] = useState(false);
   
+  // Add state for templates
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
+  
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    // Parse query parameters to check for templateId
+    const queryParams = new URLSearchParams(location.search);
+    const templateId = queryParams.get('templateId');
+    
+    loadTemplates(templateId);
+  }, [location]);
+
+  const loadTemplates = async (preselectedTemplateId?: string | null) => {
+    setIsLoadingTemplates(true);
+    try {
+      const templateData = await getAllTemplates();
+      setTemplates(templateData);
+      
+      // If a template ID was provided in the URL, select it
+      if (preselectedTemplateId) {
+        const templateExists = templateData.some(t => t.id === preselectedTemplateId);
+        if (templateExists) {
+          setSelectedTemplate(preselectedTemplateId);
+        } else {
+          sonnerToast.error("Template not found", {
+            description: "The requested template could not be found"
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error loading templates:", error);
+      sonnerToast.error("Failed to load templates", {
+        description: "Please try again later"
+      });
+    } finally {
+      setIsLoadingTemplates(false);
+    }
+  };
 
   const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -120,6 +161,9 @@ export default function GenerateWizardPage() {
     }
   };
 
+  // Get the currently selected template object
+  const selectedTemplateObject = templates.find(t => t.id === selectedTemplate);
+
   return (
     <div className="container py-8 max-w-3xl">
       <h1 className="text-3xl font-bold mb-6">Generate Carousels</h1>
@@ -177,12 +221,20 @@ export default function GenerateWizardPage() {
               <Select
                 value={selectedTemplate}
                 onValueChange={setSelectedTemplate}
+                disabled={isLoadingTemplates}
               >
                 <SelectTrigger id="template">
-                  <SelectValue placeholder="Select a template" />
+                  {isLoadingTemplates ? (
+                    <div className="flex items-center">
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <span>Loading templates...</span>
+                    </div>
+                  ) : (
+                    <SelectValue placeholder="Select a template" />
+                  )}
                 </SelectTrigger>
                 <SelectContent>
-                  {mockTemplates.map((template) => (
+                  {templates.map((template) => (
                     <SelectItem key={template.id} value={template.id}>
                       {template.name}
                     </SelectItem>
@@ -190,6 +242,43 @@ export default function GenerateWizardPage() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Template Preview Section */}
+            {selectedTemplateObject && (
+              <div className="rounded-lg border overflow-hidden mt-6">
+                <div className="bg-muted p-4">
+                  <h3 className="font-medium mb-1">Template Preview</h3>
+                </div>
+                <div className="p-0">
+                  <div className="aspect-video w-full overflow-hidden relative bg-secondary">
+                    {selectedTemplateObject.thumbnailUrl ? (
+                      <img 
+                        src={selectedTemplateObject.thumbnailUrl} 
+                        alt={selectedTemplateObject.name}
+                        className="w-full h-full object-contain" 
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <ImageIcon className="h-12 w-12 text-muted-foreground opacity-50" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-4">
+                    <div className="flex justify-between mb-2">
+                      <h3 className="font-medium">{selectedTemplateObject.name}</h3>
+                      <Badge variant="outline">
+                        {selectedTemplateObject.slides?.length || 0} slide{selectedTemplateObject.slides?.length !== 1 ? 's' : ''}
+                      </Badge>
+                    </div>
+                    {selectedTemplateObject.description && (
+                      <p className="text-sm text-muted-foreground">
+                        {selectedTemplateObject.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             
             <div className="space-y-2">
               <Label htmlFor="variants">Number of Variants</Label>
@@ -205,7 +294,7 @@ export default function GenerateWizardPage() {
             </div>
             
             <div className="pt-4 space-x-2 flex justify-end">
-              <Button onClick={() => setStep(2)}>
+              <Button onClick={() => setStep(2)} disabled={!selectedTemplate}>
                 Continue
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Button>
@@ -311,12 +400,30 @@ export default function GenerateWizardPage() {
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="space-y-4">
+              {selectedTemplateObject && (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="aspect-video w-full max-h-48 overflow-hidden relative bg-secondary">
+                    {selectedTemplateObject.thumbnailUrl ? (
+                      <img 
+                        src={selectedTemplateObject.thumbnailUrl} 
+                        alt={selectedTemplateObject.name}
+                        className="w-full h-full object-contain" 
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <ImageIcon className="h-12 w-12 text-muted-foreground opacity-50" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            
               <div className="grid grid-cols-2 gap-2">
                 <div className="text-sm font-medium">Job Name:</div>
                 <div>{jobName}</div>
                 
                 <div className="text-sm font-medium">Template:</div>
-                <div>{mockTemplates.find(t => t.id === selectedTemplate)?.name || selectedTemplate}</div>
+                <div>{templates.find(t => t.id === selectedTemplate)?.name || "Unknown Template"}</div>
                 
                 <div className="text-sm font-medium">Variants:</div>
                 <div>{numVariants}</div>
