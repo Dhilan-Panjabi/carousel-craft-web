@@ -1,5 +1,5 @@
 
-import { parse } from 'csv-parse/sync';
+import { parse } from 'csv-parse';
 
 export interface CSVRow {
   [key: string]: string;
