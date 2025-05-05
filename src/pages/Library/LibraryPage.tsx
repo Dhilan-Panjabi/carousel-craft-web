@@ -3,8 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Download, Search, Filter, Image, Clock, X } from "lucide-react";
-import { getAllJobs, JobData } from "@/integrations/jobs/jobService";
+import { Download, Search, Filter, Image, Clock, X, PlayCircle } from "lucide-react";
+import { getAllJobs } from "@/integrations/jobs/jobService";
 import {
   Select,
   SelectContent,
@@ -23,6 +23,8 @@ import {
   DialogClose
 } from "@/components/ui/dialog";
 import { useNavigate, useLocation } from "react-router-dom";
+import { ImageCarouselSelector } from "@/components/ImageCarouselSelector";
+import { ImageCarouselPreview, CarouselImage } from "@/components/ImageCarouselPreview";
 
 interface LibraryImage {
   id: string;
@@ -36,6 +38,16 @@ interface LibraryImage {
   prompt?: string;
 }
 
+// Add the ImagesByJob interface to match what we're using in ImageCarouselSelector
+interface ImagesByJob {
+  job: {
+    id: string;
+    name: string;
+    template: string;
+  };
+  images: LibraryImage[];
+}
+
 export default function LibraryPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -46,6 +58,9 @@ export default function LibraryPage() {
   const [showOnlyCompleted, setShowOnlyCompleted] = useState(true);
   const [images, setImages] = useState<LibraryImage[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(null);
+  const [showCarouselSelector, setShowCarouselSelector] = useState(false);
+  const [showCarouselPreview, setShowCarouselPreview] = useState(false);
+  const [carouselImages, setCarouselImages] = useState<CarouselImage[]>([]);
   
   useEffect(() => {
     // Parse query parameters
@@ -123,6 +138,15 @@ export default function LibraryPage() {
     loadImages();
   };
   
+  const handleCarouselPreview = (selectedImages: CarouselImage[]) => {
+    setCarouselImages(selectedImages);
+    setShowCarouselPreview(true);
+  };
+  
+  const handleRemoveFromCarousel = (imageId: string) => {
+    setCarouselImages(carouselImages.filter(img => img.id !== imageId));
+  };
+  
   // Filter images based on search and dropdown filter
   const filteredImages = images.filter(image => {
     // Text search
@@ -141,7 +165,7 @@ export default function LibraryPage() {
   });
   
   // Group images by job
-  const imagesByJob: Record<string, { job: { id: string, name: string, template: string }, images: LibraryImage[] }> = {};
+  const imagesByJob: Record<string, ImagesByJob> = {};
   
   filteredImages.forEach(image => {
     if (!imagesByJob[image.jobId]) {
@@ -179,7 +203,21 @@ export default function LibraryPage() {
             </p>
           )}
         </div>
+        
+        <Button onClick={() => setShowCarouselSelector(!showCarouselSelector)}>
+          <PlayCircle className="mr-2 h-4 w-4" />
+          {showCarouselSelector ? "Hide Carousel Tools" : "Preview Carousel"}
+        </Button>
       </div>
+      
+      {showCarouselSelector && (
+        <div className="mb-6 p-4 border rounded-lg bg-muted/20">
+          <ImageCarouselSelector
+            imagesByJob={imagesByJob}
+            onPreviewCarousel={handleCarouselPreview}
+          />
+        </div>
+      )}
       
       <div className="flex flex-col md:flex-row gap-4 mb-6">
         <div className="relative flex-1">
@@ -329,6 +367,14 @@ export default function LibraryPage() {
           )}
         </DialogContent>
       </Dialog>
+      
+      {/* Carousel Preview Dialog */}
+      <ImageCarouselPreview
+        images={carouselImages}
+        open={showCarouselPreview}
+        onOpenChange={setShowCarouselPreview}
+        onRemoveImage={handleRemoveFromCarousel}
+      />
     </div>
   );
 } 
