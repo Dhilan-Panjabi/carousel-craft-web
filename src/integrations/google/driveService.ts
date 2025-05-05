@@ -60,7 +60,11 @@ class GoogleDriveService {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     // Use the current site's origin instead of hardcoded localhost
     const currentOrigin = window.location.origin;
-    const redirectUri = import.meta.env.VITE_GOOGLE_REDIRECT_URI || `${currentOrigin}/templates/drive-callback`;
+    // Force using the current origin regardless of environment variable
+    const redirectUri = `${currentOrigin}/templates/drive-callback`;
+    
+    console.log("OAuth Redirect URI:", redirectUri);
+    console.log("Current Origin:", currentOrigin);
     
     if (!clientId) {
       toast.error("Google Client ID not configured", {
@@ -71,6 +75,7 @@ class GoogleDriveService {
     
     // Save current URL to return after auth
     localStorage.setItem('google_drive_auth_redirect', window.location.href);
+    console.log("Saved redirect URL:", window.location.href);
     
     // Create and open OAuth URL
     // Updated scope to include drive.file which gives more permissions
@@ -82,6 +87,8 @@ class GoogleDriveService {
       `&response_type=token` +
       `&include_granted_scopes=true` +
       `&prompt=select_account`;
+    
+    console.log("Full OAuth URL:", authUrl);
     
     window.location.href = authUrl;
   }

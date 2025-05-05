@@ -14,12 +14,18 @@ export default function DriveCallbackPage() {
       try {
         // Get the hash fragment from URL
         const hash = window.location.hash;
+        console.log("Callback URL:", window.location.href);
+        console.log("Hash fragment:", hash);
+        console.log("Current origin:", window.location.origin);
+        
         if (!hash) {
           throw new Error("No authentication data received");
         }
         
         // Process OAuth callback
         const success = driveService.handleOAuthCallback(hash);
+        console.log("OAuth callback processed:", success);
+        
         if (!success) {
           throw new Error("Authentication failed");
         }
@@ -28,6 +34,7 @@ export default function DriveCallbackPage() {
         
         // Check if there's a pending carousel export
         const pendingExportJson = localStorage.getItem('carousel_pending_export');
+        console.log("Pending export found:", !!pendingExportJson);
         
         if (pendingExportJson) {
           try {
@@ -57,9 +64,20 @@ export default function DriveCallbackPage() {
         
         // Get redirect URL or default to templates page
         const redirectUrl = localStorage.getItem('google_drive_auth_redirect') || '/library';
+        console.log("Original redirect URL:", redirectUrl);
         
         // If the redirect URL contains "/library", make sure we go back to the library page
         const finalRedirect = redirectUrl.includes('/library') ? '/library' : redirectUrl;
+        
+        // If URL contains localhost but we're on a different domain, fix the redirect
+        if (finalRedirect.includes('localhost') && !window.location.origin.includes('localhost')) {
+          const fixedRedirect = finalRedirect.replace(/https?:\/\/localhost:[0-9]+/g, window.location.origin);
+          console.log("Fixed localhost redirect:", fixedRedirect);
+          navigate(fixedRedirect.replace(window.location.origin, ''));
+          return;
+        }
+        
+        console.log("Final redirect URL:", finalRedirect);
         
         localStorage.removeItem('google_drive_auth_redirect');
         
@@ -78,6 +96,10 @@ export default function DriveCallbackPage() {
       } catch (error) {
         console.error("Authentication error:", error);
         setStatus("error");
+        
+        toast.error("Google Drive Connection Failed", {
+          description: "Please try again or check your Google Cloud console settings"
+        });
         
         // Redirect after error
         setTimeout(() => {
