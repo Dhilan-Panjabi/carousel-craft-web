@@ -1,73 +1,101 @@
-# Welcome to your Lovable project
 
-## Project info
+# Carousel Gen Web
 
-**URL**: https://lovable.dev/projects/4011c25f-8314-40ae-a388-054fc0fbc022
+A web application for generating carousel images at scale using templates and data sources.
 
-## How can I edit this code?
+## Features
 
-There are several ways of editing your application.
+- Upload and manage design templates (PNG/SVG + YAML config)
+- Generate carousel images from templates using CSV data or custom scripts
+- Monitor job status with real-time updates
+- Download generated carousel packages
 
-**Use Lovable**
+## Technology Stack
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/4011c25f-8314-40ae-a388-054fc0fbc022) and start prompting.
+- Vite + React + TypeScript
+- TailwindCSS for styling
+- shadcn/ui for UI components
+- Supabase for authentication, database, and serverless functions
+- React Router for navigation
+- React Query for data fetching and caching
 
-Changes made via Lovable will be committed automatically to this repo.
+## Getting Started
 
-**Use your preferred IDE**
+### Prerequisites
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+Make sure you have the following installed:
+- Node.js (v16+)
+- pnpm (v7+)
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+### Installation
 
-Follow these steps:
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/carousel-gen-web.git
+   cd carousel-gen-web
+   ```
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+2. Install dependencies:
+   ```bash
+   pnpm install
+   ```
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+3. Create a `.env` file:
+   ```bash
+   cp .env.example .env
+   ```
 
-# Step 3: Install the necessary dependencies.
-npm i
+4. Update the `.env` file with your Supabase credentials:
+   ```
+   VITE_SUPABASE_URL=your_supabase_project_url
+   VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+### Development
+
+Start the development server:
+```bash
+pnpm dev
 ```
 
-**Edit a file directly in GitHub**
+The app will be available at http://localhost:8080.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Building for Production
 
-**Use GitHub Codespaces**
+Build the application:
+```bash
+pnpm build
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+Preview the production build:
+```bash
+pnpm preview
+```
 
-## What technologies are used for this project?
+## Supabase Setup
 
-This project is built with:
+1. Create a Supabase project
+2. Set up the following tables:
+   - `templates`: For storing template information
+   - `jobs`: For tracking generation jobs
+3. Deploy the Edge Function in `/examples/edge-function-jobs.ts` to your Supabase project
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Project Structure
 
-## How can I deploy this project?
+```
+/src
+  /components       # UI components and shadcn wrappers
+  /hooks            # Custom React hooks
+  /lib              # Utility functions
+  /pages            # Page components
+    /Dashboard      # Dashboard page components
+    /Templates      # Template management components
+    /Jobs           # Job monitoring components
+    /Generate       # Wizard for creating jobs
+  /supabase         # Supabase client and auth provider
+  /routes           # Route definitions
+```
 
-Simply open [Lovable](https://lovable.dev/projects/4011c25f-8314-40ae-a388-054fc0fbc022) and click on Share -> Publish.
+## License
 
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+This project is licensed under the MIT License.
