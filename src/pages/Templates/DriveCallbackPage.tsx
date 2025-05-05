@@ -56,12 +56,23 @@ export default function DriveCallbackPage() {
         }
         
         // Get redirect URL or default to templates page
-        const redirectUrl = localStorage.getItem('google_drive_auth_redirect') || '/templates';
+        const redirectUrl = localStorage.getItem('google_drive_auth_redirect') || '/library';
+        
+        // If the redirect URL contains "/library", make sure we go back to the library page
+        const finalRedirect = redirectUrl.includes('/library') ? '/library' : redirectUrl;
+        
         localStorage.removeItem('google_drive_auth_redirect');
+        
+        // Check if we need to show export success message
+        if (pendingExportJson) {
+          toast.success("You'll be redirected back to continue your work", {
+            description: "Your Google Drive is now connected"
+          });
+        }
         
         // Redirect after short delay
         setTimeout(() => {
-          navigate(redirectUrl);
+          navigate(finalRedirect);
         }, 1500);
         
       } catch (error) {

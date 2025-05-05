@@ -69,7 +69,9 @@ export function ImageCarouselPreview({
         }));
         
         // Initiate OAuth flow
-        toast.info("Please authenticate with Google Drive");
+        toast.info("Please authenticate with Google Drive", {
+          description: "Make sure your Google OAuth credentials include this site's URL as an authorized redirect URI"
+        });
         driveService.initiateOAuth();
         return;
       }

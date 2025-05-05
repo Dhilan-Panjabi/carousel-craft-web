@@ -58,7 +58,9 @@ class GoogleDriveService {
    */
   public initiateOAuth(): void {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const redirectUri = import.meta.env.VITE_GOOGLE_REDIRECT_URI || 'http://localhost:8080/templates/drive-callback';
+    // Use the current site's origin instead of hardcoded localhost
+    const currentOrigin = window.location.origin;
+    const redirectUri = import.meta.env.VITE_GOOGLE_REDIRECT_URI || `${currentOrigin}/templates/drive-callback`;
     
     if (!clientId) {
       toast.error("Google Client ID not configured", {
