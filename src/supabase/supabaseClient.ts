@@ -1,13 +1,11 @@
 
 import { createClient } from '@supabase/supabase-js';
+import type { Database } from '@/integrations/supabase/types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Use the values directly instead of environment variables
+const SUPABASE_URL = "https://qthuuijgmhstzfefzzpf.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF0aHV1aWpnbWhzdHpmZWZ6enBmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY0NDY1MjksImV4cCI6MjA2MjAyMjUyOX0.d3YMiPJKfnSAb7W9enI7TBE0Qs5ETAQl4ATKt5ddLxE";
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 export default supabase;
