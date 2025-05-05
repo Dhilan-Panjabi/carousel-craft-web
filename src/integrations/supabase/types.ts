@@ -6,49 +6,74 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[]
 
-export type Database = {
+export interface Database {
   public: {
     Tables: {
-      profiles: {
+      templates: {
         Row: {
-          avatar_url: string | null
-          created_at: string
-          full_name: string | null
           id: string
+          name: string
+          description: string | null
+          thumbnail_url: string | null
+          yaml_config: string | null
+          slides: Json | null
+          created_at: string
           updated_at: string
-          username: string | null
         }
         Insert: {
-          avatar_url?: string | null
+          id?: string
+          name: string
+          description?: string | null
+          thumbnail_url?: string | null
+          yaml_config?: string | null
+          slides?: Json | null
           created_at?: string
-          full_name?: string | null
-          id: string
           updated_at?: string
-          username?: string | null
         }
         Update: {
-          avatar_url?: string | null
-          created_at?: string
-          full_name?: string | null
           id?: string
+          name?: string
+          description?: string | null
+          thumbnail_url?: string | null
+          yaml_config?: string | null
+          slides?: Json | null
+          created_at?: string
           updated_at?: string
-          username?: string | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          id: string
+          username: string
+          full_name: string
+          avatar_url: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          username?: string
+          full_name?: string
+          avatar_url?: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          username?: string
+          full_name?: string
+          avatar_url?: string
+          created_at?: string
+          updated_at?: string
         }
         Relationships: []
       }
     }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      [_ in never]: never
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
+    Views: {}
+    Functions: {}
+    Enums: {}
+    CompositeTypes: {}
   }
 }
 

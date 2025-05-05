@@ -1,4 +1,3 @@
-
 import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -34,9 +33,16 @@ const App = () => (
 );
 
 import { AppLayout } from "./components/AppLayout";
+import DriveCallbackPage from "./pages/Templates/DriveCallbackPage";
+import { Routes, Route, Navigate } from "react-router-dom";
 
 function AppRoutes() {
-  return <AppLayout />;
+  return (
+    <Routes>
+      <Route path="/templates/drive-callback" element={<DriveCallbackPage />} />
+      <Route path="*" element={<AppLayout />} />
+    </Routes>
+  );
 }
 
 export default App;

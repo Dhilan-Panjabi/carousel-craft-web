@@ -1,0 +1,261 @@
+import { v4 as uuidv4 } from 'uuid';
+import supabase from "@/supabase/supabaseClient";
+import type { Database } from './types';
+
+export interface TemplateField {
+  name: string;
+  type: "text" | "image";
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  fontSize?: number;
+  color?: string;
+  maxWidth?: number;
+}
+
+export interface TemplateSlide {
+  id: string;
+  name: string;
+  fields: TemplateField[];
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string;
+  thumbnailUrl: string;
+  slides: TemplateSlide[];
+  createdAt: string;
+  updatedAt: string;
+  // Optional YAML config serialized from slides
+  yamlConfig?: string;
+}
+
+/**
+ * Converts a Template object to a format ready for database storage
+ */
+const templateToDbObject = (template: Partial<Template>): Database['public']['Tables']['templates']['Insert'] => {
+  return {
+    name: template.name!,
+    description: template.description || null,
+    thumbnail_url: template.thumbnailUrl || null,
+    yaml_config: template.yamlConfig || null,
+    slides: template.slides ? JSON.stringify(template.slides) : null
+  };
+};
+
+/**
+ * Maps a database template record to the Template interface
+ */
+const dbObjectToTemplate = (record: Database['public']['Tables']['templates']['Row']): Template => {
+  return {
+    id: record.id,
+    name: record.name,
+    description: record.description || '',
+    thumbnailUrl: record.thumbnail_url || '',
+    yamlConfig: record.yaml_config || undefined,
+    slides: record.slides ? JSON.parse(record.slides as string) : [],
+    createdAt: record.created_at,
+    updatedAt: record.updated_at
+  };
+};
+
+/**
+ * Upload a template image to Supabase Storage
+ */
+export const uploadTemplateImage = async (file: Blob | File, fileName: string): Promise<string> => {
+  try {
+    console.log('Starting template image upload...');
+    console.log(`File details: name=${fileName}, type=${file.type}, size=${file.size} bytes`);
+    
+    // Check if user is authenticated
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.error('User not authenticated');
+      throw new Error('You must be logged in to upload templates');
+    }
+    
+    // Extract the file extension
+    const extension = fileName.split('.').pop()?.toLowerCase() || 'png';
+    console.log(`File extension: ${extension}`);
+    
+    // Validate file type
+    const validImageTypes = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    if (!validImageTypes.includes(extension)) {
+      console.error(`Invalid file type: ${extension}. Allowed types: ${validImageTypes.join(', ')}`);
+      throw new Error(`Invalid file type: ${extension}. Please upload a valid image file.`);
+    }
+    
+    // Generate unique file name
+    const uuid = uuidv4();
+    const storagePath = `${uuid}.${extension}`;
+    console.log(`Generated storage path: ${storagePath}`);
+    
+    // Prepare file for upload
+    let uploadFile: File;
+    if (file instanceof File) {
+      uploadFile = file;
+    } else {
+      // If it's a Blob, convert to File
+      uploadFile = new File([file], storagePath, { 
+        type: file.type || `image/${extension}` 
+      });
+    }
+    console.log(`Prepared file for upload: type=${uploadFile.type}, size=${uploadFile.size} bytes`);
+    
+    // Upload to Supabase Storage
+    console.log('Uploading to Supabase storage...');
+    const { data, error } = await supabase
+      .storage
+      .from('templates')
+      .upload(storagePath, uploadFile, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: uploadFile.type
+      });
+    
+    if (error) {
+      console.error('Supabase storage upload error:', error);
+      throw new Error(`Error uploading image: ${error.message}`);
+    }
+    
+    if (!data) {
+      console.error('No data returned from Supabase storage upload');
+      throw new Error('No data returned from upload');
+    }
+    
+    console.log('Upload successful, getting public URL...');
+    
+    // Get public URL
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from('templates')
+      .getPublicUrl(data.path);
+    
+    console.log(`Public URL generated: ${publicUrl}`);
+    return publicUrl;
+  } catch (error) {
+    console.error('Error in uploadTemplateImage:', error);
+    if (error instanceof Error) {
+      throw error;
+    } else {
+      throw new Error('Unknown error during template image upload');
+    }
+  }
+};
+
+/**
+ * Saves a template to the database
+ */
+export const saveTemplate = async (template: Partial<Template>): Promise<Template> => {
+  try {
+    const { data, error } = await supabase
+      .from('templates')
+      .insert([templateToDbObject(template)])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return dbObjectToTemplate(data);
+  } catch (error) {
+    console.error('Error saving template:', error);
+    throw error;
+  }
+};
+
+/**
+ * Updates an existing template
+ */
+export const updateTemplate = async (id: string, template: Partial<Template>): Promise<Template> => {
+  try {
+    const { data, error } = await supabase
+      .from('templates')
+      .update(templateToDbObject(template))
+      .eq('id', id)
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return dbObjectToTemplate(data);
+  } catch (error) {
+    console.error('Error updating template:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetches all templates from the database
+ */
+export const getAllTemplates = async (): Promise<Template[]> => {
+  try {
+    const { data, error } = await supabase
+      .from('templates')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    return data.map(dbObjectToTemplate);
+  } catch (error) {
+    console.error('Error fetching templates:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetches a template by ID
+ */
+export const getTemplateById = async (id: string): Promise<Template | null> => {
+  try {
+    const { data, error } = await supabase
+      .from('templates')
+      .select('*')
+      .eq('id', id)
+      .single();
+    
+    if (error) {
+      if (error.code === 'PGRST116') return null; // Not found
+      throw error;
+    }
+    
+    return dbObjectToTemplate(data);
+  } catch (error) {
+    console.error('Error fetching template:', error);
+    throw error;
+  }
+};
+
+/**
+ * Deletes a template by ID
+ */
+export const deleteTemplate = async (id: string): Promise<void> => {
+  try {
+    // First, get template to find thumbnail URL
+    const template = await getTemplateById(id);
+    
+    if (template?.thumbnailUrl) {
+      // Extract path from URL to delete from storage
+      const url = new URL(template.thumbnailUrl);
+      const pathMatch = url.pathname.match(/\/templates\/([^?]+)/);
+      if (pathMatch && pathMatch[1]) {
+        await supabase.storage
+          .from('templates')
+          .remove([pathMatch[1]]);
+      }
+    }
+    
+    // Then delete the database record
+    const { error } = await supabase
+      .from('templates')
+      .delete()
+      .eq('id', id);
+    
+    if (error) throw error;
+  } catch (error) {
+    console.error('Error deleting template:', error);
+    throw error;
+  }
+}; 
