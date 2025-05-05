@@ -69,7 +69,7 @@ export function ImageCarouselPreview({
                           <img
                             src={image.url}
                             alt={`Image from ${image.jobName}`}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-contain bg-black"
                           />
                           <button 
                             className="absolute top-2 right-2 p-1 bg-black/50 rounded-full text-white hover:bg-black/70"

@@ -369,7 +369,7 @@ Deno.serve(async (req) => {
               prompt_id: promptId, // Use the prompt ID that matches our entries in carousel_prompts
               image_url: imageUrl,
               width: 1024,
-              height: 1024,
+              height: 1536, // Update height to match the 1024x1536 dimensions
               b64_json: null, // Store null since we don't need to duplicate the data
               revised_prompt: imageResult.revised_prompt || `Variation ${index + 1} of ${templateName}`,
               created_at: new Date().toISOString()
@@ -499,7 +499,9 @@ async function generateImageVariations(
     // Create a prompt for TikTok carousel variation
     const basePrompt = `Create a variation of this image that would be perfect for a TikTok carousel post. 
                       The variation should maintain the essential style and content of the original 
-                      while being visually distinct. ${templateName ? `This is for "${templateName}".` : ''} 
+                      while being visually distinct. IMPORTANT: Format as a vertical 9:16 aspect ratio image for TikTok.
+                      Ensure all important content fits well in this vertical format without being cut off.
+                      ${templateName ? `This is for "${templateName}".` : ''} 
                       ${templateDescription ? templateDescription : ''}
                       ${additionalInstructions}`;
     
@@ -518,7 +520,7 @@ async function generateImageVariations(
     form.append("model", "gpt-image-1");
     form.append("prompt", basePrompt);
     form.append("n", String(numVariants));
-    form.append("size", "1024x1024");
+    form.append("size", "1024x1536"); // Vertical portrait format (closest to 9:16 supported by the API)
     form.append(
       "image",
       new Blob([imgBuffer], { type: "image/png" }), 
