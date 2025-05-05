@@ -202,6 +202,24 @@ async function generatePrompts(
       ? dataContent
       : undefined;
 
+    // Try to fetch template details if available
+    let templateData = null;
+    try {
+      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+      const { data, error } = await supabase
+        .from('templates')
+        .select('*')
+        .eq('id', templateId)
+        .single();
+      
+      if (!error && data) {
+        templateData = data;
+      }
+    } catch (error) {
+      console.log('Could not fetch template details:', error);
+      // Continue without template data
+    }
+
     // In a production environment, you would call the OpenAI API
     // For this example, we'll simulate the response
     
@@ -216,11 +234,13 @@ async function generatePrompts(
         for generating visually appealing carousel images.
         
         The prompts should:
-        1. Be highly detailed with clear art direction
+        1. Be highly detailed with clear art direction including composition, colors, mood, and lighting
         2. Include specific style guidance (e.g., photorealistic, illustration, etc.)
-        3. Describe composition, colors, mood, and lighting
+        3. Use structured sections like "Art Direction:", "Composition:", "Colors:", "Mood:", "Lighting:", and "Text Elements:"
         4. Include any text elements that should appear in the image
         5. Maintain brand consistency if applicable
+        6. Be at least 100 words long with rich descriptive details
+        7. Reference the template's visual style and purpose
         
         For each prompt, create something unique but related to the template theme.
       `;
@@ -231,6 +251,19 @@ async function generatePrompts(
       if (templateDescription) {
         userPrompt += ` that ${templateDescription}`;
       }
+
+      if (templateData) {
+        userPrompt += `\n\nThis template has the following details:`;
+        if (templateData.description) {
+          userPrompt += `\nDescription: ${templateData.description}`;
+        }
+        if (templateData.thumbnail_url) {
+          userPrompt += `\nIt has a thumbnail image that should inspire the style.`;
+        }
+        if (templateData.slides) {
+          userPrompt += `\nThe template has multiple slides with a cohesive design that should be maintained.`;
+        }
+      }
       
       if (naturalLanguagePrompt) {
         userPrompt += `\n\nUse the following description to guide the content of your prompts:\n${naturalLanguagePrompt}`;
@@ -239,6 +272,8 @@ async function generatePrompts(
         userPrompt += `\n${JSON.stringify(dataVariables, null, 2)}`;
         userPrompt += `\n\nMap each set of variables to a different prompt.`;
       }
+      
+      userPrompt += `\n\nThe prompts should be structured with clear sections for Art Direction, Composition, Colors, Mood, Lighting, and Text Elements to help the image generation model create consistent, high-quality images.`;
       
       // Call OpenAI API for prompt generation
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -360,8 +395,7 @@ async function generateImage(prompt: GeneratedPrompt): Promise<GeneratedImage> {
           prompt: prompt.prompt,
           n: 1,
           size: '1024x1024',
-          quality: 'hd',
-          response_format: 'url'
+          quality: 'high'
         })
       });
       
