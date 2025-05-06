@@ -18,6 +18,7 @@ import ProtectedRoute from "@/components/Auth/ProtectedRoute";
 // Pages
 import DashboardPage from "@/pages/Dashboard/DashboardPage";
 import TemplateManagerPage from "@/pages/Templates/TemplateManagerPage";
+import DriveCallbackPage from "@/pages/Templates/DriveCallbackPage";
 import JobListPage from "@/pages/Jobs/JobListPage";
 import JobDetailsPage from "@/pages/Jobs/JobDetailsPage";
 import LibraryPage from "@/pages/Library/LibraryPage";
@@ -36,6 +37,7 @@ export function AppLayout() {
   return (
     <Routes>
       <Route path="/auth" element={<AuthPage />} />
+      <Route path="/templates/drive-callback" element={<DriveCallbackPage />} />
       
       <Route element={<ProtectedRoute />}>
         <Route

@@ -11,6 +11,7 @@ import DashboardPage from "@/pages/Dashboard/DashboardPage";
 import GenerateWithAIPage from "@/pages/AI/GenerateWithAIPage";
 import ChatHistoryPage from "@/pages/AI/ChatHistory/ChatHistoryPage";
 import AuthPage from "@/pages/Auth/AuthPage";
+import DriveCallbackPage from "@/pages/Templates/DriveCallbackPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -32,6 +33,9 @@ const App = () => (
             <Routes>
               {/* Public auth route */}
               <Route path="/auth" element={<AuthPage />} />
+              
+              {/* Google Drive callback route - must be outside protected routes */}
+              <Route path="/templates/drive-callback" element={<DriveCallbackPage />} />
               
               {/* Protected routes */}
               <Route element={<ProtectedRoute />}>

@@ -31,6 +31,7 @@ class GoogleDriveService {
   private static instance: GoogleDriveService;
   private accessToken: string | null = null;
   private tokenExpiryTime: number | null = null;
+  private tokenRefreshAttempt: boolean = false;
   
   // Constants for file types
   private readonly FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
@@ -38,7 +39,14 @@ class GoogleDriveService {
   private readonly TEXT_MIME_TYPE = 'text/plain';
   
   private constructor() {
-    // Check for token in localStorage on init
+    // This gets called when the class is first instantiated
+    this.restoreAuthFromLocalStorage();
+  }
+  
+  /**
+   * Restore authentication state from localStorage
+   */
+  private restoreAuthFromLocalStorage() {
     const savedToken = localStorage.getItem('google_drive_token');
     const savedExpiry = localStorage.getItem('google_drive_token_expiry');
     
@@ -48,6 +56,10 @@ class GoogleDriveService {
       if (expiryTime > Date.now()) {
         this.accessToken = savedToken;
         this.tokenExpiryTime = expiryTime;
+      } else {
+        // Clear expired tokens
+        localStorage.removeItem('google_drive_token');
+        localStorage.removeItem('google_drive_token_expiry');
       }
     }
   }
@@ -58,22 +70,54 @@ class GoogleDriveService {
   public static getInstance(): GoogleDriveService {
     if (!GoogleDriveService.instance) {
       GoogleDriveService.instance = new GoogleDriveService();
+    } else {
+      // Always check localStorage for token updates
+      GoogleDriveService.instance.restoreAuthFromLocalStorage();
     }
     return GoogleDriveService.instance;
   }
   
   /**
+   * Ensure token is valid before making API requests
+   * @returns true if token is valid
+   */
+  private ensureValidToken(): boolean {
+    // First, try to restore from localStorage in case token was updated in another tab
+    this.restoreAuthFromLocalStorage();
+    
+    if (!this.accessToken || !this.tokenExpiryTime) {
+      return false;
+    }
+    
+    // Check if token is expired or about to expire (within 5 minutes)
+    if (this.tokenExpiryTime < (Date.now() + 5 * 60 * 1000)) {
+      // Token is expired or about to expire
+      return false;
+    }
+    
+    return true;
+  }
+  
+  /**
    * Initiates Google OAuth flow
    */
-  public initiateOAuth(): void {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  public initiateOAuth(forceConsent: boolean = false): void {
+    // Extract the client ID in case it has formatting issues
+    let clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    
+    // Check if there's a duplication issue (e.g., VITE_GOOGLE_CLIENT_ID=VITE_GOOGLE_CLIENT_ID=actual_id)
+    if (clientId && clientId.includes('VITE_GOOGLE_CLIENT_ID=')) {
+      // Extract the actual ID part
+      const matches = clientId.match(/VITE_GOOGLE_CLIENT_ID=(.+)/);
+      if (matches && matches[1]) {
+        clientId = matches[1];
+      }
+    }
+    
     // Use the current site's origin instead of hardcoded localhost
     const currentOrigin = window.location.origin;
     // Force using the current origin regardless of environment variable
     const redirectUri = `${currentOrigin}/templates/drive-callback`;
-    
-    console.log("OAuth Redirect URI:", redirectUri);
-    console.log("Current Origin:", currentOrigin);
     
     if (!clientId) {
       toast.error("Google Client ID not configured", {
@@ -82,32 +126,43 @@ class GoogleDriveService {
       return;
     }
     
+    // Don't clear tokens on initiating OAuth
+    // Only clear expired tokens in restoreAuthFromLocalStorage
+    
     // Display a reminder toast about Google Cloud Console configuration
-    toast.info("Important for Production Use", {
-      description: "Make sure to add this URL to your Google Cloud OAuth authorized redirect URIs: " + redirectUri,
-      duration: 8000
+    toast.info("Connecting to Google Drive", {
+      description: "You'll be redirected to Google to authorize access"
     });
     
     // Clear any previous auth completion flag
     localStorage.removeItem('drive_auth_completed');
+    localStorage.removeItem('drive_auth_completed_time');
     
     // Save current URL to return after auth
     localStorage.setItem('google_drive_auth_redirect', window.location.href);
-    console.log("Saved redirect URL:", window.location.href);
     
     // Create and open OAuth URL
     // Updated scope to include drive.file which gives more permissions
     const scope = encodeURIComponent("https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file");
+    
+    // Generate a state parameter with timestamp to prevent CSRF attacks and help with redirect loop prevention
+    const stateObj = {
+      timestamp: Date.now(),
+      originPath: window.location.pathname,
+      nonce: Math.random().toString(36).substring(2, 15)
+    };
+    const state = encodeURIComponent(JSON.stringify(stateObj));
+    
     const authUrl = `https://accounts.google.com/o/oauth2/auth` +
-      `?client_id=${clientId}` +
+      `?client_id=${encodeURIComponent(clientId)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&scope=${scope}` +
       `&response_type=token` +
       `&include_granted_scopes=true` +
-      `&prompt=select_account`;
+      `&state=${state}` +
+      `&prompt=${forceConsent ? 'consent' : 'select_account'}`;  // Only force consent when needed
     
-    console.log("Full OAuth URL:", authUrl);
-    
+    // Navigate to auth URL
     window.location.href = authUrl;
   }
   
@@ -117,22 +172,48 @@ class GoogleDriveService {
    * @returns true if successful
    */
   public handleOAuthCallback(hash: string): boolean {
-    if (!hash) return false;
+    if (!hash) {
+      console.error("No hash provided to handleOAuthCallback");
+      return false;
+    }
+    
+    console.log("Processing OAuth callback with hash", hash.substring(0, 20) + "...");
     
     // Extract hash parameters including access_token
     const params = new URLSearchParams(hash.substring(1));
     const accessToken = params.get('access_token');
     const expiresIn = params.get('expires_in');
     
-    if (!accessToken || !expiresIn) return false;
+    if (!accessToken || !expiresIn) {
+      console.error("Missing token or expiry in callback:", { hasToken: !!accessToken, hasExpiry: !!expiresIn });
+      return false;
+    }
+    
+    console.log("Received valid token with expiry:", expiresIn);
+    
+    // Calculate expiry time (reducing by 5 minutes for safety)
+    const expirySeconds = parseInt(expiresIn);
+    const safeExpirySeconds = Math.max(expirySeconds - 300, 0); // 5 minutes safety buffer
+    const tokenExpiryTime = Date.now() + (safeExpirySeconds * 1000);
     
     // Save token with expiry time
     this.accessToken = accessToken;
-    this.tokenExpiryTime = Date.now() + (parseInt(expiresIn) * 1000);
+    this.tokenExpiryTime = tokenExpiryTime;
     
-    // Persist token
-    localStorage.setItem('google_drive_token', accessToken);
-    localStorage.setItem('google_drive_token_expiry', this.tokenExpiryTime.toString());
+    // Force persistence to localStorage immediately
+    try {
+      localStorage.setItem('google_drive_token', accessToken);
+      localStorage.setItem('google_drive_token_expiry', tokenExpiryTime.toString());
+      console.log("Token saved to localStorage successfully. Expires in:", Math.floor(safeExpirySeconds/60), "minutes");
+      
+      // Verify token was saved
+      const savedToken = localStorage.getItem('google_drive_token');
+      if (savedToken !== accessToken) {
+        console.error("Token verification failed - localStorage didn't save properly");
+      }
+    } catch (error) {
+      console.error("Failed to save token to localStorage:", error);
+    }
     
     return true;
   }
@@ -141,8 +222,51 @@ class GoogleDriveService {
    * Check if user is authenticated with Google Drive
    */
   public isAuthenticated(): boolean {
-    if (!this.accessToken || !this.tokenExpiryTime) return false;
-    return this.tokenExpiryTime > Date.now();
+    try {
+      console.log("Checking auth status...");
+      
+      // First check instance variables (for current session)
+      if (this.accessToken && this.tokenExpiryTime && this.tokenExpiryTime > Date.now()) {
+        console.log("Authenticated via instance token");
+        return true;
+      }
+      
+      // If instance variables don't have valid token, try localStorage
+      // This helps when page refreshes have happened
+      const savedToken = localStorage.getItem('google_drive_token');
+      const savedExpiry = localStorage.getItem('google_drive_token_expiry');
+      
+      if (savedToken && savedExpiry) {
+        const expiryTime = parseInt(savedExpiry);
+        
+        // If savedToken exists and hasn't expired, we're authenticated
+        if (expiryTime > Date.now()) {
+          console.log("Authenticated via localStorage token, expires in", 
+            Math.floor((expiryTime - Date.now()) / 60000), "minutes");
+          
+          // Restore token to instance
+          this.accessToken = savedToken;
+          this.tokenExpiryTime = expiryTime;
+          return true;
+        } else {
+          console.error("Token expired, clearing localStorage", {
+            expiryTime,
+            currentTime: Date.now(),
+            diffMinutes: Math.floor((Date.now() - expiryTime) / 60000)
+          });
+          // Clean up expired tokens
+          localStorage.removeItem('google_drive_token');
+          localStorage.removeItem('google_drive_token_expiry');
+        }
+      } else {
+        console.log("No token found in localStorage");
+      }
+      
+      return false;
+    } catch (error) {
+      console.error("Error in isAuthenticated:", error);
+      return false;
+    }
   }
   
   /**
@@ -156,26 +280,43 @@ class GoogleDriveService {
   }
   
   /**
-   * Lists files from Google Drive in a specified folder
-   * @param folderId Optional folder ID, defaults to root
+   * List files in Google Drive
+   * @param folderId Folder ID to list (use 'root' for root folder)
    * @param searchQuery Optional search query
+   * @returns Array of files and folders
    */
-  public async listFiles(folderId: string = 'root', searchQuery?: string): Promise<GoogleDriveFile[]> {
-    if (!this.isAuthenticated()) {
+  public async listFiles(folderId: string = 'root', searchQuery: string = ''): Promise<GoogleDriveFile[]> {
+    // Validate the token before making the API call
+    if (!this.ensureValidToken()) {
+      console.error("Token validation failed when trying to list files");
       throw new Error("Not authenticated with Google Drive");
     }
     
+    let query = searchQuery
+      ? `name contains '${searchQuery}'`
+      : `'${folderId}' in parents`;
+    
+    // For root folder, use special query
+    if (folderId === 'root' && !searchQuery) {
+      query = "'root' in parents";
+    }
+    
+    // Skip trashed files
+    query += " and trashed = false";
+    
+    // Include filtering for common file types
+    if (searchQuery) {
+      // For search queries, don't restrict to current folder
+      // but prioritize images
+      query += ` and (mimeType contains 'image/' or mimeType = 'application/vnd.google-apps.folder')`;
+    }
+    
     try {
-      // Build the query - list files in the given folder
-      let query = `'${folderId}' in parents and trashed=false`;
-      
-      // Add search term if provided
-      if (searchQuery) {
-        query = `${query} and name contains '${searchQuery}'`;
-      }
-      
       const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,thumbnailLink,webContentLink,size,parents)&pageSize=100`,
+        `https://www.googleapis.com/drive/v3/files?` +
+        `q=${encodeURIComponent(query)}` +
+        `&fields=files(id,name,mimeType,thumbnailLink,webContentLink,size,parents)` +
+        `&pageSize=100`,
         {
           headers: {
             'Authorization': `Bearer ${this.accessToken}`
@@ -184,18 +325,23 @@ class GoogleDriveService {
       );
       
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || "Failed to list files");
+        if (response.status === 401) {
+          // Token expired or invalid
+          console.error("Google Drive token expired or invalid");
+          this.accessToken = null;
+          this.tokenExpiryTime = null;
+          localStorage.removeItem('google_drive_token');
+          localStorage.removeItem('google_drive_token_expiry');
+          throw new Error("Authentication expired. Please reconnect to Google Drive.");
+        }
+        throw new Error(`Google Drive API error: ${response.status} ${response.statusText}`);
       }
       
       const data = await response.json();
       return data.files || [];
     } catch (error) {
-      console.error("Error listing Drive files:", error);
-      toast.error("Failed to list Google Drive files", {
-        description: error instanceof Error ? error.message : "Unknown error"
-      });
-      return [];
+      console.error("Error listing Google Drive files:", error);
+      throw error;
     }
   }
   
@@ -269,122 +415,66 @@ class GoogleDriveService {
    * @returns File as Blob with proper filename
    */
   public async downloadFile(fileId: string): Promise<{ blob: Blob, fileName: string }> {
+    // Validate the token before making the API call
+    if (!this.ensureValidToken()) {
+      console.error("Token validation failed when trying to download file");
+      throw new Error("Not authenticated with Google Drive");
+    }
+    
     try {
-      console.log(`Downloading file with ID: ${fileId}`);
-      
-      // First get file metadata to determine proper download approach
-      if (!this.isAuthenticated()) {
-        throw new Error("Not authenticated with Google Drive");
-      }
-      
-      // Get file metadata to determine file name and type
-      console.log('Fetching file metadata...');
+      // First, get the file metadata to retrieve the name
       const metadataResponse = await fetch(
-        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,exportLinks`,
+        `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name`,
         {
           headers: {
-            Authorization: `Bearer ${this.accessToken}`,
-          },
+            'Authorization': `Bearer ${this.accessToken}`
+          }
         }
       );
       
       if (!metadataResponse.ok) {
-        const errorText = await metadataResponse.text();
-        console.error(`Failed to get file metadata: ${metadataResponse.status} ${errorText}`);
-        throw new Error(`Failed to get file metadata: ${metadataResponse.status}`);
+        if (metadataResponse.status === 401) {
+          // Token expired or invalid
+          console.error("Google Drive token expired or invalid");
+          this.accessToken = null;
+          this.tokenExpiryTime = null;
+          localStorage.removeItem('google_drive_token');
+          localStorage.removeItem('google_drive_token_expiry');
+          throw new Error("Authentication expired. Please reconnect to Google Drive.");
+        }
+        throw new Error(`Failed to get file metadata: ${metadataResponse.status} ${metadataResponse.statusText}`);
       }
       
       const metadata = await metadataResponse.json();
-      console.log(`File metadata:`, {
-        name: metadata.name,
-        mimeType: metadata.mimeType,
-        hasExportLinks: !!metadata.exportLinks
-      });
+      const fileName = metadata.name;
       
-      // Determine download URL based on file type
-      let downloadUrl;
-      
-      // Check if it's a Google Workspace file (Docs, Sheets, etc.)
-      if (metadata.mimeType.startsWith('application/vnd.google-apps')) {
-        console.log('Handling Google Workspace file...');
-        // Use export links for Google Docs files
-        if (metadata.exportLinks) {
-          if (metadata.mimeType === 'application/vnd.google-apps.document') {
-            downloadUrl = metadata.exportLinks['application/pdf'];
-          } else if (metadata.mimeType === 'application/vnd.google-apps.spreadsheet') {
-            downloadUrl = metadata.exportLinks['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
-          } else if (metadata.mimeType === 'application/vnd.google-apps.presentation') {
-            downloadUrl = metadata.exportLinks['application/pdf'];
-          } else if (metadata.mimeType === 'application/vnd.google-apps.drawing') {
-            downloadUrl = metadata.exportLinks['image/png'];
-          } else {
-            // Default to PDF for other Google types
-            const pdfLink = metadata.exportLinks['application/pdf'];
-            downloadUrl = pdfLink || Object.values(metadata.exportLinks)[0];
+      // Now download the actual file
+      const fileResponse = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        {
+          headers: {
+            'Authorization': `Bearer ${this.accessToken}`
           }
-          
-          console.log(`Using export link for Google Workspace file: ${downloadUrl}`);
-        } else {
-          console.error('No export links available for Google Workspace file');
-          throw new Error('Cannot download this Google Workspace file type');
         }
-      } else {
-        // Regular file - use direct download URL
-        downloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-        console.log(`Using direct download URL for regular file`);
-      }
+      );
       
-      // Download the file content
-      console.log(`Downloading from URL: ${downloadUrl}`);
-      const response = await fetch(downloadUrl, {
-        headers: {
-          Authorization: `Bearer ${this.accessToken}`,
-          // Add no-cors and cache control headers
-          'Cache-Control': 'no-cache',
-        },
-        // Use no-cors mode
-        // mode: 'no-cors'
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`File download failed: ${response.status} ${errorText}`);
-        throw new Error(`Failed to download file: ${response.status}`);
-      }
-      
-      console.log(`File downloaded successfully. Content-Type: ${response.headers.get('content-type')}`);
-      const blob = await response.blob();
-      console.log(`Blob received: type=${blob.type}, size=${blob.size} bytes`);
-      
-      // Create proper blob with correct MIME type if needed
-      let finalBlob = blob;
-      if (!blob.type || blob.type === 'application/octet-stream') {
-        // Try to infer MIME type from file extension
-        const extension = metadata.name.split('.').pop()?.toLowerCase();
-        const mimeTypes: Record<string, string> = {
-          'jpg': 'image/jpeg',
-          'jpeg': 'image/jpeg',
-          'png': 'image/png',
-          'gif': 'image/gif',
-          'webp': 'image/webp',
-          'pdf': 'application/pdf',
-          'doc': 'application/msword',
-          'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        };
-        
-        const inferredType = extension ? mimeTypes[extension] : null;
-        if (inferredType) {
-          console.log(`Inferred MIME type from extension: ${inferredType}`);
-          finalBlob = new Blob([await blob.arrayBuffer()], { type: inferredType });
+      if (!fileResponse.ok) {
+        if (fileResponse.status === 401) {
+          // Token expired or invalid
+          console.error("Google Drive token expired or invalid");
+          this.accessToken = null;
+          this.tokenExpiryTime = null;
+          localStorage.removeItem('google_drive_token');
+          localStorage.removeItem('google_drive_token_expiry');
+          throw new Error("Authentication expired. Please reconnect to Google Drive.");
         }
+        throw new Error(`Failed to download file: ${fileResponse.status} ${fileResponse.statusText}`);
       }
       
-      return {
-        blob: finalBlob,
-        fileName: metadata.name,
-      };
+      const blob = await fileResponse.blob();
+      return { blob, fileName };
     } catch (error) {
-      console.error('Error downloading file from Google Drive:', error);
+      console.error("Error downloading file from Google Drive:", error);
       throw error;
     }
   }
@@ -904,4 +994,4 @@ class GoogleDriveService {
   }
 }
 
-export default GoogleDriveService.getInstance(); 
+export default GoogleDriveService.getInstance();

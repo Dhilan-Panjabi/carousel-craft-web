@@ -40,7 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import "./TemplateManagerPage.css";
 
 interface GoogleDriveFile {
@@ -60,6 +60,7 @@ interface FolderPathItem {
 
 export default function TemplateManagerPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [activeTab, setActiveTab] = useState("all");
   const [isLoading, setIsLoading] = useState(true);
@@ -106,6 +107,52 @@ export default function TemplateManagerPage() {
   useEffect(() => {
     loadTemplates();
   }, []);
+  
+  // Handle navigation from Drive authentication
+  useEffect(() => {
+    // Check if we're coming from successful Google Drive auth
+    if (location.state?.fromDriveAuth) {
+      console.log('TemplateManagerPage: Detected redirect from Google Drive auth with timestamp:', location.state.timestamp);
+      
+      // Check if token is actually valid
+      const isAuthenticated = driveService.isAuthenticated();
+      console.log('TemplateManagerPage: Authentication status after redirect:', isAuthenticated);
+      
+      if (!isAuthenticated) {
+        console.error('TemplateManagerPage: Auth state reported but not authenticated - token likely invalid');
+        toast.error("Google Drive authentication failed", {
+          description: "Please try connecting to Google Drive again"
+        });
+        return;
+      }
+      
+      // We have successful authentication and valid token
+      console.log('TemplateManagerPage: Authentication confirmed, opening Google Drive interface');
+      
+      // Open Drive sheet immediately - no delay needed
+      setIsGoogleDriveOpen(true);
+      
+      // Load drive files - wrap in try/catch to handle errors gracefully
+      setIsDriveLoading(true);
+      loadDriveFiles("root")
+        .catch(error => {
+          console.error('TemplateManagerPage: Error loading Drive files after auth:', error);
+          toast.error("Failed to load Google Drive files", {
+            description: "Your account is connected, but there was a problem loading files"
+          });
+        })
+        .finally(() => {
+          setIsDriveLoading(false);
+          
+          // Clear navigation state after handling to prevent loops on refresh
+          window.history.replaceState(
+            {}, 
+            document.title, 
+            window.location.pathname
+          );
+        });
+    }
+  }, [location]);
   
   // Cleanup search timeout on unmount
   useEffect(() => {
@@ -203,18 +250,76 @@ export default function TemplateManagerPage() {
   
   const handleConnectGoogleDrive = async () => {
     try {
-      // Check if already authenticated
+      console.log("TemplateManagerPage: Attempting to connect to Google Drive");
+      
+      // Clear any previous auth flags from old sessions first
       if (!driveService.isAuthenticated()) {
-        // If not, start OAuth flow
+        const now = Date.now();
+        const lastAuthTime = parseInt(localStorage.getItem('drive_auth_completed_time') || '0');
+        const timeSinceLastAuth = now - lastAuthTime;
+        
+        // If it's been more than 5 minutes since last auth attempt, clear flags
+        if (timeSinceLastAuth > 5 * 60 * 1000) {
+          console.log("TemplateManagerPage: Clearing old auth flags (older than 5 minutes)");
+          localStorage.removeItem('drive_auth_completed');
+          localStorage.removeItem('drive_auth_completed_time');
+        }
+      }
+      
+      // Check if already authenticated
+      const isAuthenticated = driveService.isAuthenticated();
+      console.log("TemplateManagerPage: Is authenticated:", isAuthenticated);
+      
+      if (!isAuthenticated) {
+        // Not authenticated, start OAuth flow
+        console.log("TemplateManagerPage: Starting OAuth flow");
+        
+        // Save current URL to redirect back after auth
+        localStorage.setItem('google_drive_auth_redirect', window.location.href);
+        
+        // Start OAuth flow - this will redirect away from this page
         driveService.initiateOAuth();
         return;
       }
       
-      // If authenticated, open the Drive sheet and list files
+      // Already authenticated, open the Drive sheet and list files
+      console.log("TemplateManagerPage: Already authenticated, opening Drive sheet");
       setIsGoogleDriveOpen(true);
-      loadDriveFiles("root");
+      
+      // Load Drive files in root folder
+      try {
+        setIsDriveLoading(true);
+        await loadDriveFiles("root");
+      } catch (loadError) {
+        console.error("TemplateManagerPage: Error loading Drive files:", loadError);
+        
+        // If we get an auth error when loading files, token might be invalid
+        // Force the user to re-authenticate
+        if (loadError.message?.includes("Authentication") || 
+            loadError.message?.includes("auth") || 
+            loadError.message?.includes("token")) {
+          console.log("TemplateManagerPage: Auth error detected, clearing token and restarting auth");
+          driveService.logout();
+          toast.info("Session expired", {
+            description: "Reconnecting to Google Drive..."
+          });
+          
+          // After a brief delay, restart OAuth flow
+          setTimeout(() => {
+            driveService.initiateOAuth();
+          }, 1000);
+          return;
+        }
+        
+        // Otherwise show a generic error
+        toast.error("Failed to load Google Drive files", {
+          description: "Please try again"
+        });
+      } finally {
+        setIsDriveLoading(false);
+      }
     } catch (error) {
-      console.error("Error connecting to Google Drive:", error);
+      console.error("TemplateManagerPage: Error connecting to Google Drive:", error);
       toast.error("Failed to connect to Google Drive", {
         description: "Please try again"
       });
