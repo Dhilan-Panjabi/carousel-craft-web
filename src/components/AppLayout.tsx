@@ -25,6 +25,7 @@ import GenerateWizardPage from "@/pages/Generate/GenerateWizardPage";
 import AccountPage from "@/pages/Account/AccountPage";
 import AuthPage from "@/pages/Auth/AuthPage";
 import NotFound from "@/pages/NotFound";
+import GenerateWithAIPage from "@/pages/AI/GenerateWithAIPage";
 
 export function AppLayout() {
   const { user, signOut } = useAuth();
@@ -78,6 +79,7 @@ export function AppLayout() {
                       <Route path="/jobs/:jobId" element={<JobDetailsPage />} />
                       <Route path="/library" element={<LibraryPage />} />
                       <Route path="/generate" element={<GenerateWizardPage />} />
+                      <Route path="/ai" element={<GenerateWithAIPage />} />
                       <Route path="/account" element={<AccountPage />} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
@@ -93,6 +95,7 @@ export function AppLayout() {
           <Route path="/jobs/:jobId" element={<JobDetailsPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/generate" element={<GenerateWizardPage />} />
+          <Route path="/ai" element={<GenerateWithAIPage />} />
           <Route path="/account" element={<AccountPage />} />
         </Route>
       </Route>

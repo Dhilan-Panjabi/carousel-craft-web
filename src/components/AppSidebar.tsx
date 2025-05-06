@@ -8,6 +8,7 @@ import {
   Search,
   Home,
   Images,
+  Sparkles,
 } from "lucide-react";
 import {
   Sidebar,
@@ -24,6 +25,13 @@ import { useSidebar } from "@/components/ui/sidebar";
 
 // Navigation items
 const navigationItems = [
+  {
+    title: "Generate with AI",
+    icon: Sparkles,
+    path: "/ai",
+    className: "text-blue-500 font-medium mb-6",
+    iconClassName: "text-blue-500",
+  },
   {
     title: "Dashboard",
     icon: LayoutDashboard,
@@ -93,8 +101,9 @@ export function AppSidebar() {
                   <SidebarMenuButton
                     isActive={isActive}
                     tooltip={item.title}
+                    className={`hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors ${item.className || ''}`}
                   >
-                    <item.icon className="h-5 w-5" />
+                    <item.icon className={`h-5 w-5 ${item.iconClassName || ''}`} />
                     <span>{item.title}</span>
                   </SidebarMenuButton>
                 )}
