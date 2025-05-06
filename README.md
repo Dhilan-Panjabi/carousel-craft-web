@@ -1,44 +1,45 @@
 # Carousel Craft
 
-A modern web application for generating AI-powered image carousels at scale.
+A modern web application for creating AI-powered social media carousels with automated content generation.
 
 ## Overview
 
-Carousel Craft allows you to create templates for image carousels and generate thousands of variations using AI. The application leverages OpenAI's GPT-4o for prompt generation and GPT-image-1 for image creation.
+Carousel Craft helps content creators build engaging social media carousels by combining images with AI-generated texts, hooks, headlines, and scripts. The platform analyzes your images using OpenAI's GPT-4o vision capabilities and generates optimized social media content tailored to your carousel's theme.
 
 ## Features
 
-- Template management with configurable slides and variables
-- CSV or script-based data input for mass generation
-- Real-time job monitoring with progress tracking
-- Prompt visualization and management
-- Image library for browsing and organizing generated images
-- Edge Function processing for scalable generation
+- Image carousel management and organization
+- AI-powered content generation for social media
+- Automatically generates hooks, headlines, and full carousel scripts
+- Customizable number of content variations
+- Real-time processing with Supabase Edge Functions
+- Modern, responsive UI built with React and Tailwind
 
 ## Tech Stack
 
 - React + TypeScript
-- Tailwind CSS + shadcn/ui
-- Supabase for database and Edge Functions
-- OpenAI API for AI-powered generation
+- Tailwind CSS + shadcn/ui for component styling
+- Supabase for database, authentication, and Edge Functions
+- OpenAI's GPT-4o for image analysis and content generation
+- Vite for fast development and production builds
 
 ## Deployment
 
 ### Prerequisites
 
 1. Supabase account and project
-2. OpenAI API key
+2. OpenAI API key with access to GPT-4o
 3. Node.js and npm installed
 
 ### Database Setup
 
-1. Create the following tables in your Supabase project:
-   - `templates` - For storing carousel templates
-   - `jobs` - For tracking generation jobs
-   - `carousel_prompts` - For storing generated prompts
-   - `carousel_images` - For storing generated images
+Set up the following tables in your Supabase project:
+- `carousel_ad_assets` - For storing generated creative text content
 
-Refer to `supabase/functions/README.md` for detailed database schema.
+Run the schema SQL files included in the repository:
+```bash
+supabase db push supabase_ad_assets_schema.sql
+```
 
 ### Edge Function Deployment
 
@@ -59,10 +60,8 @@ Refer to `supabase/functions/README.md` for detailed database schema.
 
 4. Deploy the Edge Function:
    ```bash
-   supabase functions deploy generate-images
+   npm run deploy:edge-functions
    ```
-
-Refer to `supabase/functions/README.md` for detailed instructions.
 
 ### Frontend Deployment
 
@@ -96,15 +95,15 @@ Refer to `supabase/functions/README.md` for detailed instructions.
    npm run dev
    ```
 
-3. To test the Edge Function locally, refer to the instructions in `supabase/functions/README.md`.
+3. The app will be available at https://brilliant-dango-9f68cc.netlify.app/
 
-## Usage
+## How It Works
 
-1. Create a template with slides and variable placeholders
-2. Prepare your data in CSV format or as a JavaScript object
-3. Create a new job, selecting the template and uploading your data
-4. Monitor the job's progress in real-time
-5. View and download the generated images
+1. Upload images for your carousel
+2. The application sends the images to OpenAI's GPT-4o through Supabase Edge Functions
+3. AI analyzes the images and generates relevant hooks, headlines, and scripts
+4. Choose from multiple content variations and customize as needed
+5. Use the generated content with your carousel images on social media platforms
 
 ## License
 
