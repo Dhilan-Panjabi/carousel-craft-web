@@ -14,6 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { sendChatMessage, generateImages, Message as AIMessage } from "@/integrations/ai/chatService";
 
 interface Message {
   role: "user" | "assistant";
@@ -67,18 +68,9 @@ export default function GenerateWithAIPage() {
     setIsGenerating(true);
     
     try {
-      // This is a placeholder for actual AI image generation API integration
-      // In a real implementation, you would call your AI service here
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // For demo purposes, we'll use placeholder images
-      setGeneratedImages([
-        "https://placehold.co/600x400/blue/white?text=AI+Generated+Image+1",
-        "https://placehold.co/600x400/blue/white?text=AI+Generated+Image+2",
-        "https://placehold.co/600x400/blue/white?text=AI+Generated+Image+3"
-      ]);
+      // Call the image generation service
+      const imageUrls = await generateImages(prompt);
+      setGeneratedImages(imageUrls);
       
       toast.success("Images generated successfully!");
     } catch (error) {
@@ -107,27 +99,50 @@ export default function GenerateWithAIPage() {
     setIsProcessing(true);
     
     try {
-      // Simulate AI response delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Convert messages to the format expected by the API
+      const apiMessages: AIMessage[] = messages.map(message => ({
+        role: message.role,
+        content: message.content,
+      }));
       
-      // Generate different responses based on message content
-      let responseContent = "";
+      // Add the current user message
+      apiMessages.push({
+        role: 'user',
+        content: inputText,
+      });
       
-      if (inputText.toLowerCase().includes("ad") || inputText.toLowerCase().includes("creative")) {
-        responseContent = "I can help create ad creatives! Would you like me to generate some image ideas or help with ad copy?";
-      } else if (inputText.toLowerCase().includes("hello") || inputText.toLowerCase().includes("hi")) {
-        responseContent = "Hello! How can I assist you with your marketing or creative needs today?";
-      } else if (inputText.toLowerCase().includes("ai work") || inputText.toLowerCase().includes("how does ai")) {
-        responseContent = "AI systems like me work by using machine learning models trained on vast amounts of data. I analyze patterns in the data I was trained on to generate responses that are contextually relevant to your questions.";
-      } else {
-        responseContent = "I'm your AI assistant for marketing and creative tasks. I can help with ad ideas, copy suggestions, or answer questions about marketing strategies.";
+      // Extract keywords for search context - no longer needed as we're using built-in web search
+      // const searchQuery = extractSearchKeywords(inputText);
+      
+      // Call the chat service (without search query as the model will search when needed)
+      const response = await sendChatMessage(apiMessages);
+      
+      // Process and render the response
+      if (response.message.content) {
+        // Add AI response to chat
+        setMessages(prev => [...prev, { 
+          role: "assistant", 
+          content: response.message.content 
+        }]);
+      } else if (response.message.tool_calls) {
+        // If the model decided to use tools, show a processing message
+        setMessages(prev => [...prev, { 
+          role: "assistant", 
+          content: "I'm searching the web for information to help answer your question..." 
+        }]);
+        
+        // In a more complex implementation, we would handle tool calls differently,
+        // but for our current UI, we just show the final response
       }
-      
-      // Add AI response to chat
-      setMessages(prev => [...prev, { role: "assistant", content: responseContent }]);
     } catch (error) {
       toast.error("Failed to get response");
       console.error(error);
+      
+      // Add a fallback message
+      setMessages(prev => [...prev, { 
+        role: "assistant", 
+        content: "I'm sorry, but I encountered an error processing your request. Please try again later." 
+      }]);
     } finally {
       setIsProcessing(false);
     }
@@ -148,6 +163,45 @@ export default function GenerateWithAIPage() {
     setInput(question);
     handleSendMessage(question);
   };
+  
+  // Helper function to extract search keywords
+  const extractSearchKeywords = (text: string): string => {
+    // Only use search for non-trivial queries
+    if (text.length < 10) return "";
+    
+    // Check if message appears to be a question or search request
+    const isQuestion = /^(what|how|why|when|where|who|can you|could you|tell me|search for|find|lookup)/i.test(text.trim());
+    
+    // Extract potential search terms
+    // Focus on nouns and key phrases which are more likely to be search terms
+    const keywords = text
+      .replace(/[.,?!;:()"']/g, ' ')  // Remove punctuation
+      .split(/\s+/)
+      .filter(word => 
+        word.length > 3 && 
+        !commonWords.has(word.toLowerCase())
+      );
+    
+    // For questions or explicit search requests, return the processed query
+    if (isQuestion || text.toLowerCase().includes("search")) {
+      return keywords.join(' ');
+    }
+    
+    // For other messages, only return search terms if we have enough meaningful keywords
+    return keywords.length >= 3 ? keywords.join(' ') : "";
+  };
+
+  // List of common stop words to filter out
+  const commonWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 
+    'of', 'for', 'in', 'on', 'at', 'to', 'this', 'that', 'these', 'those',
+    'with', 'about', 'from', 'into', 'during', 'until', 'against', 'among',
+    'throughout', 'despite', 'towards', 'upon', 'concerning', 'been', 'have',
+    'has', 'had', 'could', 'should', 'would', 'may', 'might', 'must', 'can',
+    'will', 'shall', 'being', 'doing', 'does', 'did', 'done', 'there', 'their',
+    'they', 'them', 'then', 'than', 'some', 'such', 'what', 'when', 'where',
+    'which', 'who', 'whom', 'whose', 'how', 'why'
+  ]);
 
   return (
     <div className="flex flex-col h-[calc(100vh-140px)]">
