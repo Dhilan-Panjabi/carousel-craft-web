@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { ImageIcon, LoaderCircle, SendIcon, Bot, Code, Book, Sparkles, Search, ChevronDown } from "lucide-react";
+import { ImageIcon, LoaderCircle, SendIcon, Bot, Code, Book, Sparkles, Search, ChevronDown, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar } from "@/components/ui/avatar";
@@ -14,7 +14,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { sendChatMessage, generateImages, Message as AIMessage } from "@/integrations/ai/chatService";
+import { 
+  sendChatMessage, 
+  generateImages, 
+  Message as AIMessage, 
+  createConversation,
+  saveMessage,
+  generateConversationTitle,
+  getConversationMessages,
+  checkConversationExists
+} from "@/integrations/ai/chatService";
+import { useParams, useNavigate } from "react-router-dom";
 
 interface Message {
   role: "user" | "assistant";
@@ -22,6 +32,12 @@ interface Message {
 }
 
 export default function GenerateWithAIPage() {
+  const { conversationId } = useParams<{ conversationId: string }>();
+  const navigate = useNavigate();
+  
+  // State for active conversation
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(conversationId || null);
+  
   // State for mode selection (chat or image generation)
   const [mode, setMode] = useState<"chat" | "image">("chat");
   
@@ -35,6 +51,8 @@ export default function GenerateWithAIPage() {
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,6 +63,43 @@ export default function GenerateWithAIPage() {
     "How can I improve my social media presence?",
     "What is the best strategy for lead generation?"
   ];
+
+  // Check if conversation exists when first loading with a conversationId
+  useEffect(() => {
+    const validateConversation = async () => {
+      if (conversationId) {
+        setIsLoadingHistory(true);
+        try {
+          const exists = await checkConversationExists(conversationId);
+          if (exists) {
+            loadConversationMessages(conversationId);
+          } else {
+            console.error("Conversation does not exist:", conversationId);
+            setLoadError("This conversation could not be found or you don't have permission to view it.");
+            // Don't navigate away immediately, just show the error
+            setShowWelcome(false);
+            toast.error("Conversation not found");
+          }
+        } catch (error) {
+          console.error("Error validating conversation:", error);
+          setLoadError("Error checking conversation access");
+          // Don't navigate away immediately, just show the error
+          setShowWelcome(false);
+          toast.error("Error accessing conversation");
+        } finally {
+          setIsLoadingHistory(false);
+        }
+      } else {
+        // No conversationId means we're starting a new chat
+        setShowWelcome(true);
+        setMessages([]);
+        setActiveConversationId(null);
+        setLoadError(null);
+      }
+    };
+
+    validateConversation();
+  }, [conversationId, navigate]);
 
   // Scroll to bottom of messages
   useEffect(() => {
@@ -58,6 +113,38 @@ export default function GenerateWithAIPage() {
       textAreaRef.current.style.height = textAreaRef.current.scrollHeight + 'px';
     }
   }, [input]);
+  
+  // Load messages for a specific conversation
+  const loadConversationMessages = async (convId: string) => {
+    setIsLoadingHistory(true);
+    setLoadError(null);
+    
+    try {
+      const messages = await getConversationMessages(convId);
+      
+      // Always set the active conversation ID, even if no messages yet
+      setActiveConversationId(convId);
+      
+      if (messages && messages.length > 0) {
+        // If we have messages, display them and hide welcome screen
+        setMessages(messages as Message[]);
+        setShowWelcome(false);
+      } else {
+        // Handle case where conversation exists but has no messages
+        console.log("Conversation exists but has no messages");
+        // Empty conversation but still valid - show empty chat, not welcome
+        setMessages([]);
+        setShowWelcome(false);
+      }
+    } catch (error) {
+      console.error("Error loading conversation:", error);
+      setLoadError("This conversation could not be loaded. It may have been deleted or you don't have permission to view it.");
+      setShowWelcome(true);
+      toast.error("Failed to load conversation");
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
@@ -74,8 +161,8 @@ export default function GenerateWithAIPage() {
       
       toast.success("Images generated successfully!");
     } catch (error) {
+      console.error("Error generating images:", error);
       toast.error("Failed to generate images");
-      console.error(error);
     } finally {
       setIsGenerating(false);
     }
@@ -87,7 +174,7 @@ export default function GenerateWithAIPage() {
     // Hide welcome screen when first message is sent
     setShowWelcome(false);
     
-    // Add user message to chat
+    // Add user message to chat immediately for better UX
     const userMessage = { role: "user" as const, content: inputText };
     setMessages(prev => [...prev, userMessage]);
     setInput("");
@@ -97,6 +184,37 @@ export default function GenerateWithAIPage() {
     }
     
     setIsProcessing(true);
+    
+    // Create a new conversation if this is the first message and no conversation is active
+    if (!activeConversationId) {
+      try {
+        const title = generateConversationTitle(inputText);
+        console.log("Creating new conversation with title:", title);
+        const newConversation = await createConversation(title);
+        console.log("New conversation created:", newConversation);
+        setActiveConversationId(newConversation.id);
+        
+        // Update the URL with the new conversation ID *without* replace: true
+        // This way we maintain proper history stack
+        navigate(`/ai/${newConversation.id}`);
+        
+        // Save the user message now that we have a conversation ID
+        await saveMessage(newConversation.id, userMessage);
+      } catch (error) {
+        console.error("Failed to create conversation:", error);
+        toast.error("Authentication required. Please log in to save conversations.");
+        // Continue with the chat without saving
+      }
+    } else {
+      // Save the user message to the database if we have an active conversation
+      try {
+        await saveMessage(activeConversationId, userMessage);
+      } catch (error) {
+        console.error("Failed to save message:", error);
+        toast.error("Failed to save message");
+        // Continue with the chat without saving
+      }
+    }
     
     try {
       // Convert messages to the format expected by the API
@@ -111,38 +229,63 @@ export default function GenerateWithAIPage() {
         content: inputText,
       });
       
-      // Extract keywords for search context - no longer needed as we're using built-in web search
-      // const searchQuery = extractSearchKeywords(inputText);
+      console.log("Sending messages to AI:", apiMessages);
       
-      // Call the chat service (without search query as the model will search when needed)
+      // Call the chat service
       const response = await sendChatMessage(apiMessages);
       
+      console.log("AI response received:", response);
+      
       // Process and render the response
-      if (response.message.content) {
-        // Add AI response to chat
-        setMessages(prev => [...prev, { 
-          role: "assistant", 
+      if (response.message?.content) {
+        // Create assistant message
+        const assistantMessage = { 
+          role: "assistant" as const, 
           content: response.message.content 
-        }]);
-      } else if (response.message.tool_calls) {
-        // If the model decided to use tools, show a processing message
-        setMessages(prev => [...prev, { 
-          role: "assistant", 
-          content: "I'm searching the web for information to help answer your question..." 
-        }]);
+        };
         
-        // In a more complex implementation, we would handle tool calls differently,
-        // but for our current UI, we just show the final response
+        // Add AI response to chat
+        setMessages(prev => [...prev, assistantMessage]);
+        
+        // Save the assistant message to the database
+        if (activeConversationId) {
+          try {
+            await saveMessage(activeConversationId, assistantMessage);
+          } catch (saveError) {
+            console.error("Failed to save assistant message:", saveError);
+            toast.error("Failed to save AI response");
+            // Continue with the chat without saving
+          }
+        }
+      } else if (response.message?.tool_calls) {
+        // If the model decided to use tools, show a processing message
+        const processingMessage = { 
+          role: "assistant" as const, 
+          content: "I'm searching the web for information to help answer your question..." 
+        };
+        
+        setMessages(prev => [...prev, processingMessage]);
       }
     } catch (error) {
-      toast.error("Failed to get response");
-      console.error(error);
+      console.error("Error in chat API call:", error);
+      toast.error("Failed to get response from AI");
       
       // Add a fallback message
-      setMessages(prev => [...prev, { 
-        role: "assistant", 
+      const errorMessage = { 
+        role: "assistant" as const, 
         content: "I'm sorry, but I encountered an error processing your request. Please try again later." 
-      }]);
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
+      
+      // Save the error message to the database
+      if (activeConversationId) {
+        try {
+          await saveMessage(activeConversationId, errorMessage);
+        } catch (saveError) {
+          console.error("Failed to save error message:", saveError);
+        }
+      }
     } finally {
       setIsProcessing(false);
     }
@@ -209,7 +352,27 @@ export default function GenerateWithAIPage() {
         {mode === "chat" ? (
           <>
             <ScrollArea className="flex-1 p-4">
-              {showWelcome ? (
+              {isLoadingHistory ? (
+                <div className="flex justify-center items-center h-full">
+                  <LoaderCircle className="h-8 w-8 animate-spin text-blue-500" />
+                  <span className="ml-2">Loading conversation...</span>
+                </div>
+              ) : loadError ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <AlertTriangle className="h-16 w-16 text-red-500 mb-4" />
+                  <h2 className="text-2xl font-semibold mb-4 text-red-500">Error Loading Conversation</h2>
+                  <p className="mb-6">{loadError}</p>
+                  <Button 
+                    onClick={() => {
+                      setLoadError(null);
+                      navigate("/ai");
+                    }}
+                    className="bg-blue-500 hover:bg-blue-600 text-white"
+                  >
+                    Start New Chat
+                  </Button>
+                </div>
+              ) : showWelcome ? (
                 <div className="flex flex-col items-center justify-center h-full text-center px-4">
                   <h2 className="text-3xl font-semibold mb-8">How can I help you?</h2>
                   

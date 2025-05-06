@@ -26,6 +26,7 @@ import AccountPage from "@/pages/Account/AccountPage";
 import AuthPage from "@/pages/Auth/AuthPage";
 import NotFound from "@/pages/NotFound";
 import GenerateWithAIPage from "@/pages/AI/GenerateWithAIPage";
+import ChatHistoryPage from "@/pages/AI/ChatHistory/ChatHistoryPage";
 
 export function AppLayout() {
   const { user, signOut } = useAuth();
@@ -80,6 +81,8 @@ export function AppLayout() {
                       <Route path="/library" element={<LibraryPage />} />
                       <Route path="/generate" element={<GenerateWizardPage />} />
                       <Route path="/ai" element={<GenerateWithAIPage />} />
+                      <Route path="/ai/history" element={<ChatHistoryPage />} />
+                      <Route path="/ai/:conversationId" element={<GenerateWithAIPage />} />
                       <Route path="/account" element={<AccountPage />} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>
@@ -96,6 +99,8 @@ export function AppLayout() {
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/generate" element={<GenerateWizardPage />} />
           <Route path="/ai" element={<GenerateWithAIPage />} />
+          <Route path="/ai/history" element={<ChatHistoryPage />} />
+          <Route path="/ai/:conversationId" element={<GenerateWithAIPage />} />
           <Route path="/account" element={<AccountPage />} />
         </Route>
       </Route>
