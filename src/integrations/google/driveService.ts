@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { AdAsset } from "../ai/adAssetsService";
 
 interface GoogleDriveFile {
   id: string;
@@ -16,6 +17,13 @@ export interface CarouselImageExport {
   index: number;
 }
 
+export interface AdAssetExport {
+  id: string;
+  text: string;
+  type: 'hook' | 'headline' | 'script';
+  selected: boolean;
+}
+
 /**
  * Handles Google OAuth and Drive API integration
  */
@@ -27,6 +35,7 @@ class GoogleDriveService {
   // Constants for file types
   private readonly FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
   private readonly IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/svg+xml'];
+  private readonly TEXT_MIME_TYPE = 'text/plain';
   
   private constructor() {
     // Check for token in localStorage on init
@@ -628,6 +637,270 @@ class GoogleDriveService {
     }
     
     return `${size.toFixed(1)} ${units[unitIndex]}`;
+  }
+  
+  /**
+   * Creates a text file from string content
+   * @param content Text content to convert to a file
+   * @returns Blob with text/plain MIME type
+   */
+  private createTextFileBlob(content: string): Blob {
+    return new Blob([content], { type: this.TEXT_MIME_TYPE });
+  }
+  
+  /**
+   * Exports ad assets (hooks, headlines, scripts) to Google Drive
+   * @param carouselName Name of the carousel
+   * @param adAssets Array of ad assets to export
+   * @returns The ID of the created folder
+   */
+  public async exportAdAssetsToDrive(
+    carouselName: string, 
+    adAssets: AdAssetExport[]
+  ): Promise<string> {
+    if (!this.isAuthenticated()) {
+      throw new Error("Not authenticated with Google Drive");
+    }
+    
+    // Filter only selected assets
+    const selectedAssets = adAssets.filter(asset => asset.selected);
+    
+    if (selectedAssets.length === 0) {
+      throw new Error("No ad assets selected for export");
+    }
+    
+    try {
+      // Create a folder for the ad assets
+      const folderName = `Carousel Assets - ${carouselName} - ${new Date().toISOString().split('T')[0]}`;
+      const folderId = await this.createFolder(folderName);
+      
+      // Group assets by type
+      const assetsByType: Record<string, AdAssetExport[]> = {
+        hook: selectedAssets.filter(a => a.type === 'hook'),
+        headline: selectedAssets.filter(a => a.type === 'headline'),
+        script: selectedAssets.filter(a => a.type === 'script')
+      };
+      
+      // Create a single file for each type with all content
+      const typeLabels: Record<string, string> = {
+        hook: 'Hooks',
+        headline: 'Headlines',
+        script: 'Scripts'
+      };
+      
+      // Show initial toast
+      toast.promise(
+        Promise.resolve(true),
+        {
+          loading: `Creating asset files in Google Drive`,
+          success: `Created assets folder: ${folderName}`,
+          error: "Failed to create assets folder"
+        }
+      );
+      
+      // Process each asset type
+      for (const [type, assets] of Object.entries(assetsByType)) {
+        if (assets.length === 0) continue;
+        
+        // Create content with numbered assets
+        let content = `# ${typeLabels[type]} for ${carouselName}\n`;
+        content += `Generated on ${new Date().toLocaleString()}\n\n`;
+        
+        assets.forEach((asset, index) => {
+          content += `## ${typeLabels[type].slice(0, -1)} ${index + 1}\n`;
+          content += `${asset.text}\n\n`;
+        });
+        
+        // Create file name
+        const fileName = `${typeLabels[type]} - ${carouselName}.txt`;
+        
+        // Create text file blob
+        const textBlob = this.createTextFileBlob(content);
+        
+        // Upload to Drive
+        await this.uploadFile(textBlob, fileName, folderId);
+      }
+      
+      // Create a combined file with all assets
+      let combinedContent = `# All Ad Assets for ${carouselName}\n`;
+      combinedContent += `Generated on ${new Date().toLocaleString()}\n\n`;
+      
+      for (const [type, assets] of Object.entries(assetsByType)) {
+        if (assets.length === 0) continue;
+        
+        combinedContent += `# ${typeLabels[type]}\n\n`;
+        
+        assets.forEach((asset, index) => {
+          combinedContent += `## ${typeLabels[type].slice(0, -1)} ${index + 1}\n`;
+          combinedContent += `${asset.text}\n\n`;
+        });
+        
+        combinedContent += '\n---\n\n';
+      }
+      
+      // Upload combined file
+      const combinedFileName = `All Assets - ${carouselName}.txt`;
+      const combinedBlob = this.createTextFileBlob(combinedContent);
+      await this.uploadFile(combinedBlob, combinedFileName, folderId);
+      
+      // Final success toast
+      toast.success(`Ad assets exported to Google Drive`, {
+        description: `Successfully exported ${selectedAssets.length} assets to folder "${folderName}"`
+      });
+      
+      return folderId;
+    } catch (error) {
+      console.error("Error exporting ad assets to Drive:", error);
+      toast.error("Failed to export ad assets to Google Drive", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+      throw error;
+    }
+  }
+  
+  /**
+   * Exports carousel content (both images and ad assets) to Google Drive
+   * @param carouselName Name of the carousel
+   * @param images Array of carousel images
+   * @param adAssets Array of ad assets
+   * @returns The ID of the created parent folder
+   */
+  public async exportCompleteCarouselToDrive(
+    carouselName: string,
+    images: CarouselImageExport[],
+    adAssets: AdAssetExport[]
+  ): Promise<string> {
+    if (!this.isAuthenticated()) {
+      throw new Error("Not authenticated with Google Drive");
+    }
+    
+    try {
+      // Create a parent folder for all carousel content
+      const parentFolderName = `Complete Carousel - ${carouselName} - ${new Date().toISOString().split('T')[0]}`;
+      const parentFolderId = await this.createFolder(parentFolderName);
+      
+      // Show initial toast
+      toast.promise(
+        Promise.resolve(true),
+        {
+          loading: `Creating complete carousel in Google Drive`,
+          success: `Created parent folder: ${parentFolderName}`,
+          error: "Failed to create parent folder"
+        }
+      );
+      
+      // Create subfolder for images
+      if (images.length > 0) {
+        const imagesFolderName = "Images";
+        const imagesFolderId = await this.createFolder(imagesFolderName, parentFolderId);
+        
+        // Track progress for toast updates
+        let uploadedCount = 0;
+        const totalImages = images.length;
+        
+        // Process each image in sequence
+        for (const image of images) {
+          // Format the filename with padding for sequence
+          const paddedIndex = String(image.index + 1).padStart(2, '0');
+          const fileName = `${paddedIndex}_${image.name || 'Image'}.png`;
+          
+          // Fetch the image
+          const imageBlob = await this.fetchImageAsBlob(image.url);
+          
+          // Upload to Drive
+          await this.uploadFile(imageBlob, fileName, imagesFolderId);
+          
+          // Update progress
+          uploadedCount++;
+          
+          // Update toast for every 3rd image or the last one
+          if (uploadedCount === totalImages || uploadedCount % 3 === 0) {
+            toast.info(`Uploading carousel images to Google Drive`, {
+              description: `Progress: ${uploadedCount}/${totalImages} images uploaded`
+            });
+          }
+        }
+      }
+      
+      // Create subfolder for ad assets if there are selected assets
+      const selectedAssets = adAssets.filter(asset => asset.selected);
+      if (selectedAssets.length > 0) {
+        const assetsFolderName = "Ad Assets";
+        const assetsFolderId = await this.createFolder(assetsFolderName, parentFolderId);
+        
+        // Group assets by type
+        const assetsByType: Record<string, AdAssetExport[]> = {
+          hook: selectedAssets.filter(a => a.type === 'hook'),
+          headline: selectedAssets.filter(a => a.type === 'headline'),
+          script: selectedAssets.filter(a => a.type === 'script')
+        };
+        
+        // Create a single file for each type with all content
+        const typeLabels: Record<string, string> = {
+          hook: 'Hooks',
+          headline: 'Headlines',
+          script: 'Scripts'
+        };
+        
+        // Process each asset type
+        for (const [type, assets] of Object.entries(assetsByType)) {
+          if (assets.length === 0) continue;
+          
+          // Create content with numbered assets
+          let content = `# ${typeLabels[type]} for ${carouselName}\n`;
+          content += `Generated on ${new Date().toLocaleString()}\n\n`;
+          
+          assets.forEach((asset, index) => {
+            content += `## ${typeLabels[type].slice(0, -1)} ${index + 1}\n`;
+            content += `${asset.text}\n\n`;
+          });
+          
+          // Create file name
+          const fileName = `${typeLabels[type]} - ${carouselName}.txt`;
+          
+          // Create text file blob
+          const textBlob = this.createTextFileBlob(content);
+          
+          // Upload to Drive
+          await this.uploadFile(textBlob, fileName, assetsFolderId);
+        }
+        
+        // Create a combined file with all assets
+        let combinedContent = `# All Ad Assets for ${carouselName}\n`;
+        combinedContent += `Generated on ${new Date().toLocaleString()}\n\n`;
+        
+        for (const [type, assets] of Object.entries(assetsByType)) {
+          if (assets.length === 0) continue;
+          
+          combinedContent += `# ${typeLabels[type]}\n\n`;
+          
+          assets.forEach((asset, index) => {
+            combinedContent += `## ${typeLabels[type].slice(0, -1)} ${index + 1}\n`;
+            combinedContent += `${asset.text}\n\n`;
+          });
+          
+          combinedContent += '\n---\n\n';
+        }
+        
+        // Upload combined file
+        const combinedFileName = `All Assets - ${carouselName}.txt`;
+        const combinedBlob = this.createTextFileBlob(combinedContent);
+        await this.uploadFile(combinedBlob, combinedFileName, assetsFolderId);
+      }
+      
+      // Final success toast
+      toast.success(`Complete carousel exported to Google Drive`, {
+        description: `Successfully exported carousel to folder "${parentFolderName}"`
+      });
+      
+      return parentFolderId;
+    } catch (error) {
+      console.error("Error exporting complete carousel to Drive:", error);
+      toast.error("Failed to export complete carousel to Google Drive", {
+        description: error instanceof Error ? error.message : "Unknown error"
+      });
+      throw error;
+    }
   }
 }
 
