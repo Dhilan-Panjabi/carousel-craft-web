@@ -230,6 +230,19 @@ Deno.serve(async (req) => {
     
     // First, create prompt entries in the database to satisfy the foreign key constraint
     try {
+      // Get the job to determine the user_id
+      const { data: jobData, error: jobError } = await supabase
+        .from('jobs')
+        .select('user_id')
+        .eq('id', jobId)
+        .single();
+        
+      if (jobError) {
+        console.error(`Error fetching job data: ${JSON.stringify(jobError)}`);
+      }
+      
+      const userId = jobData?.user_id;
+      
       const promptEntries = Array.from({ length: generatedImages.length }, (_, index) => {
         const promptId = `prompt-${templateId}-${index}`;
         return {
@@ -237,7 +250,8 @@ Deno.serve(async (req) => {
           job_id: jobId,
           prompt_text: `Variation ${index + 1} of ${templateName}`,
           data_variables: null,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          user_id: userId
         };
       });
       
@@ -358,6 +372,23 @@ Deno.serve(async (req) => {
         // Save image to database
         try {
           console.log(`Saving image record to database: ${index + 1}`);
+          
+          // Get the job to determine the user_id if we don't have it yet
+          let userId = null;
+          if (!userId) {
+            const { data: jobData, error: jobError } = await supabase
+              .from('jobs')
+              .select('user_id')
+              .eq('id', jobId)
+              .single();
+              
+            if (jobError) {
+              console.error(`Error fetching job data: ${JSON.stringify(jobError)}`);
+            } else {
+              userId = jobData?.user_id;
+            }
+          }
+          
           // Use the correct prompt ID format to match what we created earlier
           const promptId = `prompt-${templateId}-${index}`;
           const imageId = `image-${templateId}-${index}`;
@@ -372,7 +403,8 @@ Deno.serve(async (req) => {
               height: 1536, // Update height to match the 1024x1536 dimensions
               b64_json: null, // Store null since we don't need to duplicate the data
               revised_prompt: imageResult.revised_prompt || `Variation ${index + 1} of ${templateName}`,
-              created_at: new Date().toISOString()
+              created_at: new Date().toISOString(),
+              user_id: userId
             });
             
           if (dbError) {

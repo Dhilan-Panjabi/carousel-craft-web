@@ -39,8 +39,11 @@ export interface Template {
 /**
  * Converts a Template object to a format ready for database storage
  */
-const templateToDbObject = (template: Partial<Template>): Database['public']['Tables']['templates']['Insert'] => {
+const templateToDbObject = async (template: Partial<Template>): Promise<Database['public']['Tables']['templates']['Insert']> => {
   console.log('Converting template to DB object:', template);
+  
+  // Get current user's ID
+  const { data: { user } } = await supabase.auth.getUser();
   
   const dbObject = {
     name: template.name!,
@@ -49,7 +52,8 @@ const templateToDbObject = (template: Partial<Template>): Database['public']['Ta
     yaml_config: template.yamlConfig || null,
     slides: template.slides ? JSON.stringify(template.slides) : null,
     additional_images: template.additionalImages ? JSON.stringify(template.additionalImages) : null,
-    favorite: template.favorite || false
+    favorite: template.favorite || false,
+    user_id: user?.id || null
   };
   
   console.log('DB object:', dbObject);
@@ -182,9 +186,10 @@ export const uploadTemplateImage = async (file: Blob | File, fileName: string): 
  */
 export const saveTemplate = async (template: Partial<Template>): Promise<Template> => {
   try {
+    const dbObject = await templateToDbObject(template);
     const { data, error } = await supabase
       .from('templates')
-      .insert([templateToDbObject(template)])
+      .insert([dbObject])
       .select()
       .single();
     
@@ -202,9 +207,10 @@ export const saveTemplate = async (template: Partial<Template>): Promise<Templat
  */
 export const updateTemplate = async (id: string, template: Partial<Template>): Promise<Template> => {
   try {
+    const dbObject = await templateToDbObject(template);
     const { data, error } = await supabase
       .from('templates')
-      .update(templateToDbObject(template))
+      .update(dbObject)
       .eq('id', id)
       .select()
       .single();
@@ -223,6 +229,7 @@ export const updateTemplate = async (id: string, template: Partial<Template>): P
  */
 export const getAllTemplates = async (): Promise<Template[]> => {
   try {
+    // RLS policies will automatically filter to only show templates for the current user
     const { data, error } = await supabase
       .from('templates')
       .select('*')

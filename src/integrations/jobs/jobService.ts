@@ -24,6 +24,7 @@ export interface JobData {
     prompt: string;
     dataVariables?: Record<string, string>;
   }>;
+  userId?: string;
 }
 
 // Type for Supabase job updates
@@ -50,6 +51,12 @@ export const createJob = async (
   try {
     const jobId = nanoid();
     const now = new Date().toISOString();
+    
+    // Get current user ID
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error('You must be logged in to create jobs');
+    }
     
     // Fetch template details to get the thumbnail URL
     const { data: templateData, error: templateError } = await supabase
@@ -97,7 +104,8 @@ export const createJob = async (
         data_type: dataType === 'natural-language' ? 'script' : dataType,
         data_content: dataContent as Json,
         created_at: now,
-        updated_at: now
+        updated_at: now,
+        user_id: user.id
       });
     
     if (error) {
@@ -303,7 +311,8 @@ export const getJob = async (jobId: string): Promise<JobData | null> => {
       updatedAt: data.updated_at || new Date().toISOString(),
       imageUrls: data.image_urls || [],
       message: data.message || undefined,
-      prompts: data.prompts as JobData['prompts'] || undefined
+      prompts: data.prompts as JobData['prompts'] || undefined,
+      userId: data.user_id || undefined
     };
     
     return job;
@@ -320,7 +329,7 @@ export const getJob = async (jobId: string): Promise<JobData | null> => {
  */
 export const getAllJobs = async (): Promise<JobData[]> => {
   try {
-    // Fetch jobs from Supabase
+    // Fetch jobs from Supabase - RLS will automatically filter to the current user's jobs
     const { data, error } = await supabase
       .from('jobs')
       .select('*')
@@ -358,7 +367,8 @@ export const getAllJobs = async (): Promise<JobData[]> => {
         updatedAt: job.updated_at || new Date().toISOString(),
         imageUrls: job.image_urls || [],
         message: job.message || undefined,
-        prompts: job.prompts as JobData['prompts'] || undefined
+        prompts: job.prompts as JobData['prompts'] || undefined,
+        userId: job.user_id || undefined
       };
     });
     
@@ -378,7 +388,7 @@ export const getAllJobs = async (): Promise<JobData[]> => {
  */
 export const getJobsByTemplateId = async (templateId: string): Promise<JobData[]> => {
   try {
-    // Fetch jobs from Supabase filtered by template ID
+    // Fetch jobs from Supabase filtered by template ID - RLS will also filter by user_id
     const { data, error } = await supabase
       .from('jobs')
       .select('*')
@@ -418,7 +428,8 @@ export const getJobsByTemplateId = async (templateId: string): Promise<JobData[]
         updatedAt: job.updated_at || new Date().toISOString(),
         imageUrls: job.image_urls || [],
         message: job.message || undefined,
-        prompts: job.prompts as JobData['prompts'] || undefined
+        prompts: job.prompts as JobData['prompts'] || undefined,
+        userId: job.user_id || undefined
       };
     });
     

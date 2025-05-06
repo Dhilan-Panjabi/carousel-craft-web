@@ -20,6 +20,8 @@ export interface Database {
           additional_images: Json | null
           created_at: string
           updated_at: string
+          favorite: boolean | null
+          user_id: string | null
         }
         Insert: {
           id?: string
@@ -31,6 +33,8 @@ export interface Database {
           additional_images?: Json | null
           created_at?: string
           updated_at?: string
+          favorite?: boolean | null
+          user_id?: string | null
         }
         Update: {
           id?: string
@@ -42,6 +46,8 @@ export interface Database {
           additional_images?: Json | null
           created_at?: string
           updated_at?: string
+          favorite?: boolean | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -89,6 +95,8 @@ export interface Database {
           data_content: Json | null
           created_at: string | null
           updated_at: string | null
+          variants: number | null
+          user_id: string | null
         }
         Insert: {
           id?: string
@@ -104,6 +112,8 @@ export interface Database {
           data_content?: Json | null
           created_at?: string | null
           updated_at?: string | null
+          variants?: number | null
+          user_id?: string | null
         }
         Update: {
           id?: string
@@ -119,6 +129,8 @@ export interface Database {
           data_content?: Json | null
           created_at?: string | null
           updated_at?: string | null
+          variants?: number | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -129,6 +141,7 @@ export interface Database {
           prompt_text: string
           data_variables: Json | null
           created_at: string | null
+          user_id: string | null
         }
         Insert: {
           id?: string
@@ -136,6 +149,7 @@ export interface Database {
           prompt_text: string
           data_variables?: Json | null
           created_at?: string | null
+          user_id?: string | null
         }
         Update: {
           id?: string
@@ -143,6 +157,7 @@ export interface Database {
           prompt_text?: string
           data_variables?: Json | null
           created_at?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
@@ -155,6 +170,9 @@ export interface Database {
           width: number
           height: number
           created_at: string | null
+          b64_json: string | null
+          revised_prompt: string | null
+          user_id: string | null
         }
         Insert: {
           id?: string
@@ -164,6 +182,9 @@ export interface Database {
           width: number
           height: number
           created_at?: string | null
+          b64_json?: string | null
+          revised_prompt?: string | null
+          user_id?: string | null
         }
         Update: {
           id?: string
@@ -173,6 +194,9 @@ export interface Database {
           width?: number
           height?: number
           created_at?: string | null
+          b64_json?: string | null
+          revised_prompt?: string | null
+          user_id?: string | null
         }
         Relationships: []
       }
